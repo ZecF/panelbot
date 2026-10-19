@@ -11,18 +11,20 @@ const os = require('os');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  maxHttpBufferSize: 200 * 1024 * 1024
+  maxHttpBufferSize: 200 * 1024 * 1024 // Dukungan upload file hingga 200MB
 });
 
 const PANEL_PORT = process.env.PORT || 3000;
 const BOT_PORT = '8080';
 
+// Langsung menggunakan root folder aplikasi (/app) sebagai direktori kerja utama
 const WORKSPACE_DIR = __dirname;
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '200mb' }));
 app.use(express.urlencoded({ limit: '200mb', extended: true }));
 
+// Daftar file/folder milik panel web yang TIDAK BOLEH ikut terhapus atau tertimpa
 const PROTECTED_FILES = ['server.js', 'package.json', 'Dockerfile', 'heroku.yml', 'public', 'node_modules', '.git'];
 
 const storage = multer.diskStorage({
@@ -35,6 +37,7 @@ const upload = multer({
   limits: { fileSize: 200 * 1024 * 1024 }
 });
 
+// Fungsi otomatis patch package.json, ubah github: jadi tarball, & hapus node_modules bawaan zip
 function autoFixBotFolder(dirPath) {
   const items = fs.readdirSync(dirPath, { withFileTypes: true });
 
@@ -79,6 +82,50 @@ function autoFixBotFolder(dirPath) {
   }
 }
 
+// Fungsi untuk menghitung total ukuran disk folder bot
+function getFolderSize(dirPath) {
+  let totalSize = 0;
+  try {
+    const files = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const file of files) {
+      if (file.name === 'node_modules' || file.name === '.git') continue;
+      const filePath = path.join(dirPath, file.name);
+      if (file.isDirectory()) {
+        totalSize += getFolderSize(filePath);
+      } else {
+        const stats = fs.statSync(filePath);
+        totalSize += stats.size;
+      }
+    }
+  } catch (e) {}
+  return totalSize;
+}
+
+// Endpoint API Statistik Server Real-time untuk Dashboard
+app.get('/api/stats', (req, res) => {
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const usedMem = totalMem - freeMem;
+  const memUsagePercent = ((usedMem / totalMem) * 100).toFixed(1);
+
+  const diskUsedBytes = getFolderSize(WORKSPACE_DIR);
+  const diskUsedMB = (diskUsedBytes / (1024 * 1024)).toFixed(1);
+
+  const loadAvg = os.loadavg()[0];
+  const cpuCount = os.cpus().length || 1;
+  const cpuPercent = Math.min(Math.round((loadAvg / cpuCount) * 100), 100);
+
+  res.json({
+    address: req.headers.host || 'localhost',
+    uptime: Math.floor(process.uptime()),
+    cpu: `${cpuPercent}%`,
+    memory: `${(usedMem / 1024 / 1024).toFixed(0)} MB / ${(totalMem / 1024 / 1024).toFixed(0)} MB (${memUsagePercent}%)`,
+    disk: `${diskUsedMB} MB / 500 MB`,
+    node: process.version
+  });
+});
+
+// Endpoint Upload: Langsung ekstrak ke root utama & ratakan isinya
 app.post('/api/upload', (req, res) => {
   upload.single('scriptFile')(req, res, (err) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -120,6 +167,7 @@ app.post('/api/upload', (req, res) => {
   });
 });
 
+// Endpoint API: Hapus File atau Folder Bot lewat Tombol Sampah (🗑️)
 app.post('/api/delete', (req, res) => {
   const { fileName } = req.body;
   if (!fileName) return res.status(400).json({ error: 'Nama file tidak valid.' });
@@ -142,6 +190,7 @@ app.post('/api/delete', (req, res) => {
   }
 });
 
+// Endpoint Daftar File
 app.get('/api/files', (req, res) => {
   fs.readdir(WORKSPACE_DIR, { withFileTypes: true }, (err, files) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -161,13 +210,7 @@ app.get('/api/files', (req, res) => {
   });
 });
 
-app.get('/api/specs', (req, res) => {
-  res.json({
-    node: process.version,
-    ram: `${Math.round(os.freemem() / 1024 / 1024)} MB free / ${Math.round(os.totalmem() / 1024 / 1024)} MB`
-  });
-});
-
+// Sesi Terminal di Root Utama
 let shellProcess = null;
 
 function startInteractiveShell() {
@@ -194,8 +237,8 @@ function startInteractiveShell() {
 startInteractiveShell();
 
 io.on('connection', (socket) => {
-  socket.emit('term-output', `\x1b[1;36m=== PteroWA Termux Web Terminal (Direct Root Mode) ===\x1b[0m\r\n`);
-  socket.emit('term-output', `\x1b[1;33mNode.js ${process.version} | FFmpeg Ready | Bot Port: ${BOT_PORT}\x1b[0m\r\n\r\n`);
+  socket.emit('term-output', `\x1b[1;36m=== PteroWA Termux Web Terminal (Server Monitor Edition) ===\x1b[0m\r\n`);
+  socket.emit('term-output', `\x1b[1;33mNode.js ${process.version} | Bot Port: ${BOT_PORT}\x1b[0m\r\n\r\n`);
 
   if (shellProcess && shellProcess.stdin.writable) shellProcess.stdin.write('\n');
 
