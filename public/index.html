@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PteroWA Panel — Termux Web & 200MB Uploader</title>
+  <title>PteroWA Panel — Server Monitor Edition</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
@@ -18,13 +18,8 @@
       <div class="flex items-center gap-3">
         <span class="h-3 w-3 rounded-full bg-emerald-400 animate-pulse"></span>
         <h1 class="text-lg font-bold tracking-wide text-white">
-          PteroWA <span class="text-xs font-normal bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">Direct Root Edition</span>
+          PteroWA <span class="text-xs font-normal bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">Server Monitor Edition</span>
         </h1>
-      </div>
-      <div class="flex flex-wrap items-center gap-2 text-xs text-slate-300">
-        <span class="bg-slate-800 px-2.5 py-1 rounded border border-slate-700">Node.js: <strong id="spec-node" class="text-emerald-400">v20.x</strong></span>
-        <span class="bg-slate-800 px-2.5 py-1 rounded border border-slate-700">FFmpeg: <strong class="text-emerald-400">Installed</strong></span>
-        <span class="bg-slate-800 px-2.5 py-1 rounded border border-slate-700">RAM: <strong id="spec-ram" class="text-cyan-400">Loading...</strong></span>
       </div>
     </div>
   </header>
@@ -32,209 +27,135 @@
   <!-- Main Grid -->
   <main class="max-w-7xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-    <!-- Kolom Kiri: Terminal Interaktif ala Termux -->
-    <section class="lg:col-span-2 flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
-      <div class="bg-slate-800/70 px-4 py-2.5 flex items-center justify-between border-b border-slate-700">
-        <div class="flex items-center gap-2">
+    <!-- Kolom Kiri & Tengah: Indikator & Terminal -->
+    <section class="lg:col-span-2 flex flex-col gap-6">
+
+      <!-- Kotak Indikator / Dashboard Cards (Ala Panel Bots) -->
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl">
+          <p class="text-[11px] text-slate-400 font-medium">Address</p>
+          <p id="stat-address" class="text-xs sm:text-sm font-bold text-emerald-400 truncate mt-1">Loading...</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl">
+          <p class="text-[11px] text-slate-400 font-medium">Uptime</p>
+          <p id="stat-uptime" class="text-xs sm:text-sm font-bold text-slate-100 truncate mt-1">0j 0m 0d</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl">
+          <p class="text-[11px] text-slate-400 font-medium">CPU Load</p>
+          <p id="stat-cpu" class="text-xs sm:text-sm font-bold text-amber-400 truncate mt-1">0%</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl">
+          <p class="text-[11px] text-slate-400 font-medium">Memory</p>
+          <p id="stat-memory" class="text-xs sm:text-sm font-bold text-cyan-400 truncate mt-1">Loading...</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl">
+          <p class="text-[11px] text-slate-400 font-medium">Disk Usage</p>
+          <p id="stat-disk" class="text-xs sm:text-sm font-bold text-emerald-400 truncate mt-1">Loading...</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl">
+          <p class="text-[11px] text-slate-400 font-medium">Node.js Version</p>
+          <p id="stat-node" class="text-xs sm:text-sm font-bold text-purple-400 truncate mt-1">v20.x</p>
+        </div>
+      </div>
+
+      <!-- Terminal Interaktif -->
+      <div class="flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+        <div class="bg-slate-800/70 px-4 py-2.5 flex items-center justify-between border-b border-slate-700">
           <span class="text-xs font-mono text-emerald-400">bash@ptero-wa:~#</span>
+          <div class="flex gap-2">
+            <button onclick="sendSigInt()" class="bg-amber-600 hover:bg-amber-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">Stop Bot</button>
+            <button onclick="restartTerm()" class="bg-rose-600 hover:bg-rose-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">Restart</button>
+          </div>
         </div>
-        <div class="flex gap-2">
-          <button onclick="sendSigInt()" class="bg-amber-600 hover:bg-amber-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">
-            Stop Bot (CTRL+C)
-          </button>
-          <button onclick="restartTerm()" class="bg-rose-600 hover:bg-rose-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">
-            Restart Shell
-          </button>
+
+        <div id="terminal-container" class="w-full h-[320px] bg-black p-2"></div>
+
+        <!-- Tombol Pintas -->
+        <div class="bg-slate-950 border-t border-slate-800 p-2 flex flex-wrap gap-1.5">
+          <button onclick="quickCmd('ls -la\n')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">ls -la</button>
+          <button onclick="quickCmd('rm -rf node_modules package-lock.json && npm install --legacy-peer-deps\n')" class="bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">Fix & npm install</button>
+          <button onclick="quickCmd('PORT=8080 npm start\n')" class="bg-emerald-700/40 hover:bg-emerald-600/50 text-emerald-200 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-600/50">npm start</button>
+          <button onclick="quickCmd('PORT=8080 node index.js\n')" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">node index.js</button>
+          <button onclick="term.clear()" class="bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">Clear</button>
         </div>
+
+        <form onsubmit="submitCommand(event)" class="flex border-t border-slate-800 bg-slate-900">
+          <span class="px-3 py-2.5 text-emerald-400 font-mono text-sm select-none">$</span>
+          <input id="cmd-input" type="text" placeholder="Ketik perintah..." class="w-full bg-transparent text-sm font-mono text-white focus:outline-none py-2.5 pr-3" autocomplete="off" />
+          <button type="submit" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-5 transition">Kirim</button>
+        </form>
       </div>
-
-      <!-- Layar Xterm.js -->
-      <div id="terminal-container" class="w-full h-[380px] bg-black p-2"></div>
-
-      <!-- Baris Tombol Cepat ala Termux Android -->
-      <div class="bg-slate-950 border-t border-slate-800 p-2 flex flex-wrap gap-1.5">
-        <button onclick="quickCmd('ls -la\n')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
-          ls -la
-        </button>
-        <button onclick="quickCmd('rm -rf node_modules package-lock.json && npm install --legacy-peer-deps\n')" class="bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
-          Fix & npm install
-        </button>
-        <button onclick="quickCmd('PORT=8080 npm start\n')" class="bg-emerald-700/40 hover:bg-emerald-600/50 text-emerald-200 text-xs font-mono px-2.5 py-1.5 rounded border border-emerald-600/50">
-          npm start
-        </button>
-        <button onclick="quickCmd('PORT=8080 node index.js\n')" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
-          node index.js
-        </button>
-        <button onclick="quickCmd('rm -rf session auth_info_baileys\n')" class="bg-slate-800 hover:bg-slate-700 text-rose-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
-          Hapus Session
-        </button>
-        <button onclick="term.clear()" class="bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
-          Clear
-        </button>
-      </div>
-
-      <!-- Input Ketik Manual -->
-      <form onsubmit="submitCommand(event)" class="flex border-t border-slate-800 bg-slate-900">
-        <span class="px-3 py-2.5 text-emerald-400 font-mono text-sm select-none">$</span>
-        <input
-          id="cmd-input"
-          type="text"
-          placeholder="Ketik perintah Termux di sini..."
-          class="w-full bg-transparent text-sm font-mono text-white focus:outline-none py-2.5 pr-3"
-          autocomplete="off"
-        />
-        <button type="submit" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-5 transition">
-          Kirim
-        </button>
-      </form>
     </section>
 
-    <!-- Kolom Kanan: Upload Script (Max 200MB) & File Manager -->
+    <!-- Kolom Kanan: Upload & File Manager -->
     <section class="flex flex-col gap-6">
-
-      <!-- Card Upload Script 200MB -->
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
         <h2 class="text-sm font-semibold text-white mb-1">Upload Script Bot (Maks 200MB)</h2>
-        <p class="text-xs text-slate-400 mb-3">
-          Upload file <code class="text-emerald-400">.zip</code> untuk langsung diekstrak ke root utama.
-        </p>
+        <p class="text-xs text-slate-400 mb-3">Upload file <code class="text-emerald-400">.zip</code> untuk diekstrak ke root.</p>
 
         <label class="flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-emerald-500 rounded-lg p-5 cursor-pointer transition bg-slate-950/50">
-          <span class="text-xs text-slate-300 font-medium text-center" id="file-label">
-            Klik untuk pilih file (.zip)
-          </span>
-          <span class="text-[11px] text-slate-500 mt-1">Batas ukuran maksimal: 200 MB</span>
+          <span class="text-xs text-slate-300 font-medium text-center" id="file-label">Pilih file (.zip)</span>
           <input type="file" id="script-file" class="hidden" onchange="updateFileName()" />
         </label>
-
-        <!-- Progress Bar -->
-        <div id="progress-wrapper" class="hidden mt-3">
-          <div class="flex justify-between text-xs mb-1">
-            <span id="progress-status" class="text-emerald-400">Mengupload...</span>
-            <span id="progress-percent">0%</span>
-          </div>
-          <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-            <div id="progress-bar" class="bg-emerald-500 h-full transition-all duration-150" style="width: 0%"></div>
-          </div>
-        </div>
-
-        <button onclick="uploadScript()" class="mt-3 w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2.5 rounded-lg transition">
-          Upload & Ekstrak ke Server
-        </button>
+        <button onclick="uploadScript()" class="mt-3 w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2.5 rounded-lg transition">Upload & Ekstrak</button>
       </div>
 
-      <!-- Card File Manager Root -->
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl flex-1 flex flex-col">
         <div class="flex items-center justify-between mb-3">
           <h2 class="text-sm font-semibold text-white">Daftar File Bot</h2>
           <button onclick="loadFiles()" class="text-xs text-cyan-400 hover:underline">Refresh</button>
         </div>
         <ul id="file-list" class="space-y-1.5 text-xs font-mono overflow-y-auto max-h-60 pr-1">
-          <li class="text-slate-500">Memuat daftar file...</li>
+          <li class="text-slate-500">Memuat file...</li>
         </ul>
       </div>
-
     </section>
   </main>
 
   <script>
     const socket = io();
-    const term = new Terminal({
-      cursorBlink: true,
-      convertEol: true,
-      fontSize: 12,
-      fontFamily: 'monospace',
-      theme: { background: '#000000', foreground: '#e2e8f0' }
-    });
-
+    const term = new Terminal({ cursorBlink: true, convertEol: true, fontSize: 12, fontFamily: 'monospace', theme: { background: '#000000', foreground: '#e2e8f0' } });
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
     term.open(document.getElementById('terminal-container'));
     fitAddon.fit();
 
     window.addEventListener('resize', () => fitAddon.fit());
-
-    term.onData((data) => {
-      socket.emit('term-input', data);
-    });
-
-    socket.on('term-output', (data) => {
-      term.write(data);
-    });
+    term.onData((data) => socket.emit('term-input', data));
+    socket.on('term-output', (data) => term.write(data));
 
     function submitCommand(e) {
       e.preventDefault();
       const input = document.getElementById('cmd-input');
-      if (input.value.trim() !== '') {
-        socket.emit('term-input', input.value + '\n');
-        input.value = '';
-      }
+      if (input.value.trim() !== '') { socket.emit('term-input', input.value + '\n'); input.value = ''; }
     }
 
-    function quickCmd(cmd) {
-      socket.emit('term-input', cmd);
-      setTimeout(loadFiles, 1000);
-    }
-
-    function sendSigInt() {
-      socket.emit('term-sigint');
-    }
-
-    function restartTerm() {
-      socket.emit('term-restart');
-    }
+    function quickCmd(cmd) { socket.emit('term-input', cmd); setTimeout(loadFiles, 1000); }
+    function sendSigInt() { socket.emit('term-sigint'); }
+    function restartTerm() { socket.emit('term-restart'); }
 
     function updateFileName() {
-      const fileInput = document.getElementById('script-file');
-      const label = document.getElementById('file-label');
-      if (fileInput.files.length) {
-        const f = fileInput.files[0];
-        const sizeMB = (f.size / (1024 * 1024)).toFixed(2);
-        label.textContent = `${f.name} (${sizeMB} MB)`;
-      }
+      const f = document.getElementById('script-file').files[0];
+      if (f) document.getElementById('file-label').textContent = `${f.name} (${(f.size/(1024*1024)).toFixed(2)} MB)`;
     }
 
-    function uploadScript() {
-      const fileInput = document.getElementById('script-file');
-      if (!fileInput.files.length) return alert('Pilih file script terlebih dahulu!');
+    async function loadStats() {
+      try {
+        const res = await fetch('/api/stats');
+        const data = await res.json();
+        document.getElementById('stat-address').textContent = data.address;
+        
+        const sec = data.uptime;
+        const d = Math.floor(sec / (3600*24));
+        const h = Math.floor((sec % (3600*24)) / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        document.getElementById('stat-uptime').textContent = `${d}j ${h}m ${m}d`;
 
-      const file = fileInput.files[0];
-      if (file.size > 200 * 1024 * 1024) {
-        return alert('Ukuran file melebihi batas maksimal 200MB!');
-      }
-
-      const formData = new FormData();
-      formData.append('scriptFile', file);
-
-      const xhr = new XMLHttpRequest();
-      const wrap = document.getElementById('progress-wrapper');
-      const bar = document.getElementById('progress-bar');
-      const pct = document.getElementById('progress-percent');
-      const status = document.getElementById('progress-status');
-
-      wrap.classList.remove('hidden');
-      status.textContent = 'Mengupload & Mengekstrak...';
-
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          const percent = Math.round((e.loaded / e.total) * 100);
-          bar.style.width = percent + '%';
-          pct.textContent = percent + '%';
-        }
-      };
-
-      xhr.onload = () => {
-        const res = JSON.parse(xhr.responseText || '{}');
-        if (xhr.status === 200) {
-          status.textContent = res.message;
-          loadFiles();
-        } else {
-          status.textContent = res.error || 'Upload gagal';
-        }
-      };
-
-      xhr.open('POST', '/api/upload', true);
-      xhr.send(formData);
+        document.getElementById('stat-cpu').textContent = data.cpu;
+        document.getElementById('stat-memory').textContent = data.memory;
+        document.getElementById('stat-disk').textContent = data.disk;
+        document.getElementById('stat-node').textContent = data.node;
+      } catch (e) {}
     }
 
     async function loadFiles() {
@@ -242,10 +163,7 @@
         const res = await fetch('/api/files');
         const files = await res.json();
         const list = document.getElementById('file-list');
-        if (!files.length) {
-          list.innerHTML = '<li class="text-slate-500">Belum ada file bot yang di-upload.</li>';
-          return;
-        }
+        if (!files.length) { list.innerHTML = '<li class="text-slate-500">Belum ada file bot.</li>'; return; }
         list.innerHTML = files.map(f => `
           <li class="flex justify-between items-center bg-slate-950 px-2.5 py-1.5 rounded border border-slate-800">
             <span class="${f.isDirectory ? 'text-amber-400 font-semibold' : 'text-slate-200'} truncate max-w-[170px]" title="${f.name}">
@@ -253,9 +171,7 @@
             </span>
             <div class="flex items-center gap-2">
               <span class="text-slate-500 text-[10px]">${f.size}</span>
-              <button onclick="deleteFile('${f.name}')" class="bg-rose-900/40 hover:bg-rose-700 text-rose-300 text-[11px] px-2 py-0.5 rounded border border-rose-800/60 transition" title="Hapus file/folder">
-                🗑️
-              </button>
+              <button onclick="deleteFile('${f.name}')" class="bg-rose-900/40 hover:bg-rose-700 text-rose-300 text-[11px] px-2 py-0.5 rounded border border-rose-800/60 transition" title="Hapus">🗑️</button>
             </div>
           </li>
         `).join('');
@@ -264,34 +180,23 @@
 
     async function deleteFile(fileName) {
       if (!confirm(`Yakin ingin menghapus "${fileName}"?`)) return;
-      try {
-        const res = await fetch('/api/delete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileName })
-        });
-        const data = await res.json();
-        if (res.status === 200) {
-          loadFiles();
-        } else {
-          alert(data.error || 'Gagal menghapus file');
-        }
-      } catch (err) {
-        alert('Terjadi kesalahan koneksi.');
-      }
+      await fetch('/api/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileName }) });
+      loadFiles();
     }
 
-    async function loadSpecs() {
-      try {
-        const res = await fetch('/api/specs');
-        const data = await res.json();
-        document.getElementById('spec-node').textContent = data.node;
-        document.getElementById('spec-ram').textContent = data.ram;
-      } catch (e) {}
+    function uploadScript() {
+      const f = document.getElementById('script-file').files[0];
+      if (!f) return alert('Pilih file zip terlebih dahulu!');
+      const fd = new FormData(); fd.append('scriptFile', f);
+      const xhr = new XMLHttpRequest();
+      xhr.onload = () => { alert('Upload & Ekstrak Selesai!'); loadFiles(); };
+      xhr.open('POST', '/api/upload', true);
+      xhr.send(fd);
     }
 
     loadFiles();
-    loadSpecs();
+    loadStats();
+    setInterval(loadStats, 3000); // Update statistik realtime setiap 3 detik
     setInterval(loadFiles, 5000);
   </script>
 </body>
