@@ -18,7 +18,7 @@
       <div class="flex items-center gap-3">
         <span class="h-3 w-3 rounded-full bg-emerald-400 animate-pulse"></span>
         <h1 class="text-lg font-bold tracking-wide text-white">
-          PteroWA <span class="text-xs font-normal bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">Termux Edition</span>
+          PteroWA <span class="text-xs font-normal bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">Direct Root Edition</span>
         </h1>
       </div>
       <div class="flex flex-wrap items-center gap-2 text-xs text-slate-300">
@@ -36,7 +36,7 @@
     <section class="lg:col-span-2 flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
       <div class="bg-slate-800/70 px-4 py-2.5 flex items-center justify-between border-b border-slate-700">
         <div class="flex items-center gap-2">
-          <span class="text-xs font-mono text-emerald-400">bash@workspace:~#</span>
+          <span class="text-xs font-mono text-emerald-400">bash@ptero-wa:~#</span>
         </div>
         <div class="flex gap-2">
           <button onclick="sendSigInt()" class="bg-amber-600 hover:bg-amber-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">
@@ -99,12 +99,12 @@
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
         <h2 class="text-sm font-semibold text-white mb-1">Upload Script Bot (Maks 200MB)</h2>
         <p class="text-xs text-slate-400 mb-3">
-          Upload file <code class="text-emerald-400">.zip</code> untuk langsung diekstrak & di-patch otomatis ke folder kerja.
+          Upload file <code class="text-emerald-400">.zip</code> untuk langsung diekstrak ke root utama.
         </p>
 
         <label class="flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-emerald-500 rounded-lg p-5 cursor-pointer transition bg-slate-950/50">
           <span class="text-xs text-slate-300 font-medium text-center" id="file-label">
-            Klik untuk pilih file (.zip / .js / .json)
+            Klik untuk pilih file (.zip)
           </span>
           <span class="text-[11px] text-slate-500 mt-1">Batas ukuran maksimal: 200 MB</span>
           <input type="file" id="script-file" class="hidden" onchange="updateFileName()" />
@@ -126,10 +126,10 @@
         </button>
       </div>
 
-      <!-- Card File Manager Workspace -->
+      <!-- Card File Manager Root -->
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl flex-1 flex flex-col">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-sm font-semibold text-white">Isi Folder <code class="text-emerald-400">/workspace</code></h2>
+          <h2 class="text-sm font-semibold text-white">Daftar File Bot</h2>
           <button onclick="loadFiles()" class="text-xs text-cyan-400 hover:underline">Refresh</button>
         </div>
         <ul id="file-list" class="space-y-1.5 text-xs font-mono overflow-y-auto max-h-60 pr-1">
@@ -144,7 +144,7 @@
     const socket = io();
     const term = new Terminal({
       cursorBlink: true,
-      convertEol: true, // Merapikan baris baru agar rata kiri di layar HP
+      convertEol: true, // Merapikan baris baru agar rata kiri di HP
       fontSize: 12,
       fontFamily: 'monospace',
       theme: { background: '#000000', foreground: '#e2e8f0' }
@@ -246,7 +246,7 @@
         const files = await res.json();
         const list = document.getElementById('file-list');
         if (!files.length) {
-          list.innerHTML = '<li class="text-slate-500">Folder /workspace masih kosong.</li>';
+          list.innerHTML = '<li class="text-slate-500">Belum ada file bot yang di-upload.</li>';
           return;
         }
         list.innerHTML = files.map(f => `
