@@ -11,7 +11,7 @@ const os = require('os');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  maxHttpBufferSize: 200 * 1024 * 1024
+  maxHttpBufferSize: 200 * 1024 * 1024 // Dukungan upload file hingga 200MB
 });
 
 const PANEL_PORT = process.env.PORT || 3000;
@@ -37,7 +37,7 @@ const upload = multer({
   limits: { fileSize: 200 * 1024 * 1024 }
 });
 
-// Fungsi otomatis patch package.json & hapus node_modules bawaan zip
+// Fungsi otomatis patch package.json, ubah github: jadi tarball, & hapus node_modules bawaan zip
 function autoFixBotFolder(dirPath) {
   const items = fs.readdirSync(dirPath, { withFileTypes: true });
 
@@ -53,14 +53,30 @@ function autoFixBotFolder(dirPath) {
       fs.rmSync(fullPath, { force: true });
       continue;
     }
+
+    // Deteksi dan perbaiki package.json secara otomatis
     if (!item.isDirectory() && item.name === 'package.json') {
       try {
         const pkg = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
         let modified = false;
+
+        // 1. Akali SEMUA dependensi yang menggunakan format "github:username/repo" menjadi .tar.gz
+        if (pkg.dependencies) {
+          for (const [depName, depVal] of Object.entries(pkg.dependencies)) {
+            if (typeof depVal === 'string' && depVal.startsWith('github:')) {
+              const repoPath = depVal.replace('github:', '');
+              pkg.dependencies[depName] = `https://github.com/${repoPath}/archive/refs/heads/main.tar.gz`;
+              modified = true;
+            }
+          }
+        }
+
+        // 2. Patch better-sqlite3 ke versi latest agar aman di Node v20 tanpa node-gyp
         if (pkg.dependencies && pkg.dependencies['better-sqlite3']) {
           pkg.dependencies['better-sqlite3'] = 'latest';
           modified = true;
         }
+
         if (modified) {
           fs.writeFileSync(fullPath, JSON.stringify(pkg, null, 2));
         }
@@ -101,7 +117,7 @@ app.post('/api/upload', (req, res) => {
 
         autoFixBotFolder(WORKSPACE_DIR);
 
-        io.emit('term-output', `\r\n\x1b[1;32m[SYSTEM] ${fileName} berhasil diekstrak langsung ke root utama & di-patch!\x1b[0m\r\n`);
+        io.emit('term-output', `\r\n\x1b[1;32m[SYSTEM] ${fileName} berhasil diekstrak langsung ke root utama & di-patch (GitHub dependencies converted)!\x1b[0m\r\n`);
         return res.json({ message: `${fileName} berhasil diekstrak dan siap di-install!` });
       } catch (zipErr) {
         return res.status(500).json({ error: `Gagal ekstrak: ${zipErr.message}` });
@@ -110,6 +126,30 @@ app.post('/api/upload', (req, res) => {
 
     res.json({ message: `File ${fileName} berhasil diupload!` });
   });
+});
+
+// Endpoint API: Hapus File atau Folder Bot lewat Tombol Sampah (🗑️)
+app.post('/api/delete', (req, res) => {
+  const { fileName } = req.body;
+  if (!fileName) return res.status(400).json({ error: 'Nama file tidak valid.' });
+
+  // Keamanan: Cegah penghapusan file sistem panel
+  if (PROTECTED_FILES.includes(fileName)) {
+    return res.status(403).json({ error: 'File sistem panel tidak boleh dihapus!' });
+  }
+
+  const targetPath = path.join(WORKSPACE_DIR, fileName);
+  if (fs.existsSync(targetPath)) {
+    try {
+      fs.rmSync(targetPath, { recursive: true, force: true });
+      io.emit('term-output', `\r\n\x1b[1;33m[SYSTEM] File/Folder "${fileName}" berhasil dihapus.\x1b[0m\r\n`);
+      return res.json({ message: `Berhasil menghapus ${fileName}` });
+    } catch (err) {
+      return res.status(500).json({ error: `Gagal menghapus: ${err.message}` });
+    }
+  } else {
+    return res.status(404).json({ error: 'File tidak ditemukan.' });
+  }
 });
 
 // Endpoint Daftar File (Hanya menampilkan file bot, menyembunyikan file sistem panel)
@@ -132,6 +172,7 @@ app.get('/api/files', (req, res) => {
   });
 });
 
+// Endpoint API: Spesifikasi Server
 app.get('/api/specs', (req, res) => {
   res.json({
     node: process.version,
