@@ -258,8 +258,11 @@
       xhr.send(formData);
     }
 
+    // Eksekusi langsung saat halaman dimuat agar indikator tidak hilang
     loadFiles();
     loadStats();
+
+    // Perbarui otomatis secara berkala
     setInterval(loadStats, 3000);
     setInterval(loadFiles, 5000);
   </script>
