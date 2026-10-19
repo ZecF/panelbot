@@ -17,7 +17,9 @@
     <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-3">
         <span class="h-3 w-3 rounded-full bg-emerald-400 animate-pulse"></span>
-        <h1 class="text-lg font-bold tracking-wide text-white">PteroWA <span class="text-xs font-normal bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">Termux Edition</span></h1>
+        <h1 class="text-lg font-bold tracking-wide text-white">
+          PteroWA <span class="text-xs font-normal bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">Termux Edition</span>
+        </h1>
       </div>
       <div class="flex flex-wrap items-center gap-2 text-xs text-slate-300">
         <span class="bg-slate-800 px-2.5 py-1 rounded border border-slate-700">Node.js: <strong id="spec-node" class="text-emerald-400">v20.x</strong></span>
@@ -30,15 +32,19 @@
   <!-- Main Grid -->
   <main class="max-w-7xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-    <!-- Kolom Kiri: Terminal Interaktif ala Termux (2 Kolom) -->
+    <!-- Kolom Kiri: Terminal Interaktif ala Termux -->
     <section class="lg:col-span-2 flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
       <div class="bg-slate-800/70 px-4 py-2.5 flex items-center justify-between border-b border-slate-700">
         <div class="flex items-center gap-2">
           <span class="text-xs font-mono text-emerald-400">bash@workspace:~#</span>
         </div>
         <div class="flex gap-2">
-          <button onclick="sendSigInt()" class="bg-amber-600 hover:bg-amber-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">Stop Bot (CTRL+C)</button>
-          <button onclick="restartTerm()" class="bg-rose-600 hover:bg-rose-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">Restart Shell</button>
+          <button onclick="sendSigInt()" class="bg-amber-600 hover:bg-amber-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">
+            Stop Bot (CTRL+C)
+          </button>
+          <button onclick="restartTerm()" class="bg-rose-600 hover:bg-rose-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">
+            Restart Shell
+          </button>
         </div>
       </div>
 
@@ -47,19 +53,42 @@
 
       <!-- Baris Tombol Cepat ala Termux Android -->
       <div class="bg-slate-950 border-t border-slate-800 p-2 flex flex-wrap gap-1.5">
-        <button onclick="quickCmd('ls -la\n')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">ls -la</button>
-        <button onclick="quickCmd('npm install\n')" class="bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">npm install</button>
-        <button onclick="quickCmd('node index.js\n')" class="bg-emerald-700/40 hover:bg-emerald-600/50 text-emerald-200 text-xs font-mono px-2.5 py-1.5 rounded border border-emerald-600/50">node index.js</button>
-        <button onclick="quickCmd('ffmpeg -version\n')" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">ffmpeg -v</button>
-        <button onclick="quickCmd('rm -rf session\n')" class="bg-slate-800 hover:bg-slate-700 text-rose-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">Hapus Session</button>
-        <button onclick="term.clear()" class="bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">Clear</button>
+        <button onclick="quickCmd('ls -la\n')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
+          ls -la
+        </button>
+        <button onclick="quickCmd('rm -rf node_modules package-lock.json && npm pkg set dependencies.better-sqlite3=latest && npm install --legacy-peer-deps\n')" class="bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
+          Fix & npm install
+        </button>
+        <button onclick="quickCmd('PORT=8080 npm start\n')" class="bg-emerald-700/40 hover:bg-emerald-600/50 text-emerald-200 text-xs font-mono px-2.5 py-1.5 rounded border border-emerald-600/50">
+          npm start
+        </button>
+        <button onclick="quickCmd('PORT=8080 node app.js\n')" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
+          node app.js
+        </button>
+        <button onclick="quickCmd('PORT=8080 node index.js\n')" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
+          node index.js
+        </button>
+        <button onclick="quickCmd('rm -rf session auth_info_baileys\n')" class="bg-slate-800 hover:bg-slate-700 text-rose-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
+          Hapus Session
+        </button>
+        <button onclick="term.clear()" class="bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
+          Clear
+        </button>
       </div>
 
-      <!-- Input Ketik Manual (Nyaman untuk HP) -->
+      <!-- Input Ketik Manual -->
       <form onsubmit="submitCommand(event)" class="flex border-t border-slate-800 bg-slate-900">
         <span class="px-3 py-2.5 text-emerald-400 font-mono text-sm select-none">$</span>
-        <input id="cmd-input" type="text" placeholder="Ketik perintah Termux di sini (misal: npm i / node index.js / git clone ...)" class="w-full bg-transparent text-sm font-mono text-white focus:outline-none py-2.5 pr-3" autocomplete="off" />
-        <button type="submit" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-5 transition">Kirim</button>
+        <input
+          id="cmd-input"
+          type="text"
+          placeholder="Ketik perintah Termux di sini..."
+          class="w-full bg-transparent text-sm font-mono text-white focus:outline-none py-2.5 pr-3"
+          autocomplete="off"
+        />
+        <button type="submit" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-5 transition">
+          Kirim
+        </button>
       </form>
     </section>
 
@@ -69,10 +98,14 @@
       <!-- Card Upload Script 200MB -->
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
         <h2 class="text-sm font-semibold text-white mb-1">Upload Script Bot (Maks 200MB)</h2>
-        <p class="text-xs text-slate-400 mb-3">Upload file <code class="text-emerald-400">.zip</code> untuk langsung diekstrak otomatis ke folder kerja.</p>
+        <p class="text-xs text-slate-400 mb-3">
+          Upload file <code class="text-emerald-400">.zip</code> untuk langsung diekstrak & di-patch otomatis ke folder kerja.
+        </p>
 
         <label class="flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-emerald-500 rounded-lg p-5 cursor-pointer transition bg-slate-950/50">
-          <span class="text-xs text-slate-300 font-medium text-center" id="file-label">Klik untuk pilih file (.zip / .js / .json)</span>
+          <span class="text-xs text-slate-300 font-medium text-center" id="file-label">
+            Klik untuk pilih file (.zip / .js / .json)
+          </span>
           <span class="text-[11px] text-slate-500 mt-1">Batas ukuran maksimal: 200 MB</span>
           <input type="file" id="script-file" class="hidden" onchange="updateFileName()" />
         </label>
@@ -111,11 +144,12 @@
     const socket = io();
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: 13,
-      convertEol: true,
+      convertEol: true, // Merapikan baris baru agar rata kiri di layar HP
+      fontSize: 12,
       fontFamily: 'monospace',
       theme: { background: '#000000', foreground: '#e2e8f0' }
     });
+
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
     term.open(document.getElementById('terminal-container'));
@@ -123,17 +157,14 @@
 
     window.addEventListener('resize', () => fitAddon.fit());
 
-    // Ketik langsung di layar Xterm
     term.onData((data) => {
       socket.emit('term-input', data);
     });
 
-    // Tampilkan output dari server ke Xterm
     socket.on('term-output', (data) => {
       term.write(data);
     });
 
-    // Kirim dari input teks bawah
     function submitCommand(e) {
       e.preventDefault();
       const input = document.getElementById('cmd-input');
@@ -145,7 +176,7 @@
 
     function quickCmd(cmd) {
       socket.emit('term-input', cmd);
-      loadFiles();
+      setTimeout(loadFiles, 1000);
     }
 
     function sendSigInt() {
@@ -185,6 +216,7 @@
       const status = document.getElementById('progress-status');
 
       wrap.classList.remove('hidden');
+      status.textContent = 'Mengupload & Mengekstrak...';
 
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
@@ -209,28 +241,32 @@
     }
 
     async function loadFiles() {
-      const res = await fetch('/api/files');
-      const files = await res.json();
-      const list = document.getElementById('file-list');
-      if (!files.length) {
-        list.innerHTML = '<li class="text-slate-500">Folder /workspace masih kosong.</li>';
-        return;
-      }
-      list.innerHTML = files.map(f => `
-        <li class="flex justify-between items-center bg-slate-950 px-2.5 py-1.5 rounded border border-slate-800">
-          <span class="${f.isDirectory ? 'text-amber-400 font-semibold' : 'text-slate-200'}">
-            ${f.isDirectory ? '📁 ' : '📄 '}${f.name}
-          </span>
-          <span class="text-slate-500 text-[11px]">${f.size}</span>
-        </li>
-      `).join('');
+      try {
+        const res = await fetch('/api/files');
+        const files = await res.json();
+        const list = document.getElementById('file-list');
+        if (!files.length) {
+          list.innerHTML = '<li class="text-slate-500">Folder /workspace masih kosong.</li>';
+          return;
+        }
+        list.innerHTML = files.map(f => `
+          <li class="flex justify-between items-center bg-slate-950 px-2.5 py-1.5 rounded border border-slate-800">
+            <span class="${f.isDirectory ? 'text-amber-400 font-semibold' : 'text-slate-200'} truncate max-w-[200px]">
+              ${f.isDirectory ? '📁 ' : '📄 '}${f.name}
+            </span>
+            <span class="text-slate-500 text-[11px] shrink-0">${f.size}</span>
+          </li>
+        `).join('');
+      } catch (e) {}
     }
 
     async function loadSpecs() {
-      const res = await fetch('/api/specs');
-      const data = await res.json();
-      document.getElementById('spec-node').textContent = data.node;
-      document.getElementById('spec-ram').textContent = data.ram;
+      try {
+        const res = await fetch('/api/specs');
+        const data = await res.json();
+        document.getElementById('spec-node').textContent = data.node;
+        document.getElementById('spec-ram').textContent = data.ram;
+      } catch (e) {}
     }
 
     loadFiles();
