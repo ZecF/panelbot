@@ -109,4 +109,114 @@ app.post('/api/upload', (req, res) => {
 
         autoFixBotFolder(WORKSPACE_DIR);
 
-        io.
+        io.emit('term-output', `\r\n\x1b[1;32m[SYSTEM] ${fileName} berhasil diekstrak langsung ke root utama & di-patch!\x1b[0m\r\n`);
+        return res.json({ message: `${fileName} berhasil diekstrak dan siap di-install!` });
+      } catch (zipErr) {
+        return res.status(500).json({ error: `Gagal ekstrak: ${zipErr.message}` });
+      }
+    }
+
+    res.json({ message: `File ${fileName} berhasil diupload!` });
+  });
+});
+
+app.post('/api/delete', (req, res) => {
+  const { fileName } = req.body;
+  if (!fileName) return res.status(400).json({ error: 'Nama file tidak valid.' });
+
+  if (PROTECTED_FILES.includes(fileName)) {
+    return res.status(403).json({ error: 'File sistem panel tidak boleh dihapus!' });
+  }
+
+  const targetPath = path.join(WORKSPACE_DIR, fileName);
+  if (fs.existsSync(targetPath)) {
+    try {
+      fs.rmSync(targetPath, { recursive: true, force: true });
+      io.emit('term-output', `\r\n\x1b[1;33m[SYSTEM] File/Folder "${fileName}" berhasil dihapus.\x1b[0m\r\n`);
+      return res.json({ message: `Berhasil menghapus ${fileName}` });
+    } catch (err) {
+      return res.status(500).json({ error: `Gagal menghapus: ${err.message}` });
+    }
+  } else {
+    return res.status(404).json({ error: 'File tidak ditemukan.' });
+  }
+});
+
+app.get('/api/files', (req, res) => {
+  fs.readdir(WORKSPACE_DIR, { withFileTypes: true }, (err, files) => {
+    if (err) return res.status(500).json({ error: err.message });
+    const fileList = files
+      .filter(f => !PROTECTED_FILES.includes(f.name))
+      .map(f => {
+        let sizeStr = '-';
+        if (!f.isDirectory()) {
+          try {
+            const stats = fs.statSync(path.join(WORKSPACE_DIR, f.name));
+            sizeStr = `${(stats.size / 1024).toFixed(1)} KB`;
+          } catch (e) {}
+        }
+        return { name: f.name, isDirectory: f.isDirectory(), size: sizeStr };
+      });
+    res.json(fileList);
+  });
+});
+
+app.get('/api/specs', (req, res) => {
+  res.json({
+    node: process.version,
+    ram: `${Math.round(os.freemem() / 1024 / 1024)} MB free / ${Math.round(os.totalmem() / 1024 / 1024)} MB`
+  });
+});
+
+let shellProcess = null;
+
+function startInteractiveShell() {
+  if (shellProcess) {
+    try { shellProcess.kill('SIGKILL'); } catch (e) {}
+  }
+
+  shellProcess = spawn('bash', [], {
+    cwd: WORKSPACE_DIR,
+    env: {
+      ...process.env,
+      PORT: BOT_PORT,
+      SERVER_PORT: BOT_PORT,
+      TERM: 'xterm-256color',
+      PS1: '\\[\\033[01;32m\\]termux@ptero-wa\\[\\033[00m\\]:\\W\\$ '
+    }
+  });
+
+  shellProcess.stdout.on('data', (data) => io.emit('term-output', data.toString()));
+  shellProcess.stderr.on('data', (data) => io.emit('term-output', data.toString()));
+  shellProcess.on('close', () => setTimeout(startInteractiveShell, 1000));
+}
+
+startInteractiveShell();
+
+io.on('connection', (socket) => {
+  socket.emit('term-output', `\x1b[1;36m=== PteroWA Termux Web Terminal (Direct Root Mode) ===\x1b[0m\r\n`);
+  socket.emit('term-output', `\x1b[1;33mNode.js ${process.version} | FFmpeg Ready | Bot Port: ${BOT_PORT}\x1b[0m\r\n\r\n`);
+
+  if (shellProcess && shellProcess.stdin.writable) shellProcess.stdin.write('\n');
+
+  socket.on('term-input', (cmd) => {
+    if (shellProcess && shellProcess.stdin.writable) shellProcess.stdin.write(cmd);
+  });
+
+  socket.on('term-sigint', () => {
+    if (shellProcess) {
+      shellProcess.kill('SIGINT');
+      exec(`pkill -f "node app.js"; pkill -f "node index.js"; pkill -f "node main.js"`, () => {});
+      io.emit('term-output', '^C\r\n\x1b[1;33m[SYSTEM] Bot dihentikan.\x1b[0m\r\n');
+      if (shellProcess.stdin.writable) shellProcess.stdin.write('\n');
+    }
+  });
+
+  socket.on('term-restart', () => {
+    exec(`pkill -f "node app.js"; pkill -f "node index.js"; pkill -f "node main.js"`, () => {
+      startInteractiveShell();
+    });
+  });
+});
+
+server.listen(PANEL_PORT, () => console.log(`Panel aktif di port ${PANEL_PORT}`));
