@@ -56,14 +56,11 @@
         <button onclick="quickCmd('ls -la\n')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
           ls -la
         </button>
-        <button onclick="quickCmd('rm -rf node_modules package-lock.json && npm pkg set dependencies.better-sqlite3=latest && npm install --legacy-peer-deps\n')" class="bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
+        <button onclick="quickCmd('rm -rf node_modules package-lock.json && npm install --legacy-peer-deps\n')" class="bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
           Fix & npm install
         </button>
         <button onclick="quickCmd('PORT=8080 npm start\n')" class="bg-emerald-700/40 hover:bg-emerald-600/50 text-emerald-200 text-xs font-mono px-2.5 py-1.5 rounded border border-emerald-600/50">
           npm start
-        </button>
-        <button onclick="quickCmd('PORT=8080 node app.js\n')" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
-          node app.js
         </button>
         <button onclick="quickCmd('PORT=8080 node index.js\n')" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">
           node index.js
@@ -144,7 +141,7 @@
     const socket = io();
     const term = new Terminal({
       cursorBlink: true,
-      convertEol: true, // Merapikan baris baru agar rata kiri di HP
+      convertEol: true,
       fontSize: 12,
       fontFamily: 'monospace',
       theme: { background: '#000000', foreground: '#e2e8f0' }
@@ -251,13 +248,37 @@
         }
         list.innerHTML = files.map(f => `
           <li class="flex justify-between items-center bg-slate-950 px-2.5 py-1.5 rounded border border-slate-800">
-            <span class="${f.isDirectory ? 'text-amber-400 font-semibold' : 'text-slate-200'} truncate max-w-[200px]">
+            <span class="${f.isDirectory ? 'text-amber-400 font-semibold' : 'text-slate-200'} truncate max-w-[170px]" title="${f.name}">
               ${f.isDirectory ? '📁 ' : '📄 '}${f.name}
             </span>
-            <span class="text-slate-500 text-[11px] shrink-0">${f.size}</span>
+            <div class="flex items-center gap-2">
+              <span class="text-slate-500 text-[10px]">${f.size}</span>
+              <button onclick="deleteFile('${f.name}')" class="bg-rose-900/40 hover:bg-rose-700 text-rose-300 text-[11px] px-2 py-0.5 rounded border border-rose-800/60 transition" title="Hapus file/folder">
+                🗑️
+              </button>
+            </div>
           </li>
         `).join('');
       } catch (e) {}
+    }
+
+    async function deleteFile(fileName) {
+      if (!confirm(`Yakin ingin menghapus "${fileName}"?`)) return;
+      try {
+        const res = await fetch('/api/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileName })
+        });
+        const data = await res.json();
+        if (res.status === 200) {
+          loadFiles();
+        } else {
+          alert(data.error || 'Gagal menghapus file');
+        }
+      } catch (err) {
+        alert('Terjadi kesalahan koneksi.');
+      }
     }
 
     async function loadSpecs() {
