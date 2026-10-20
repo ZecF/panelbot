@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PteroWA Panel — Server Monitor Edition</title>
+  <title>PteroWA Panel — VPS Persistent Edition</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
@@ -18,9 +18,12 @@
       <div class="flex items-center gap-3">
         <span class="h-3 w-3 rounded-full bg-emerald-400 animate-pulse"></span>
         <h1 class="text-lg font-bold tracking-wide text-white">
-          PteroWA <span class="text-xs font-normal bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">Server Monitor Edition</span>
+          PteroWA <span class="text-xs font-normal bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">VPS Persistent Mode</span>
         </h1>
       </div>
+      <button onclick="manualBackup()" id="btn-backup" class="bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shadow transition">
+        💾 Backup ke Cloud Disk Sekarang
+      </button>
     </div>
   </header>
 
@@ -49,7 +52,7 @@
           <p id="stat-memory" class="text-xs sm:text-sm font-bold text-cyan-400 truncate mt-1">Loading...</p>
         </div>
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl">
-          <p class="text-[11px] text-slate-400 font-medium">Disk Usage</p>
+          <p class="text-[11px] text-slate-400 font-medium">Disk & Cloud Sync</p>
           <p id="stat-disk" class="text-xs sm:text-sm font-bold text-emerald-400 truncate mt-1">Loading...</p>
         </div>
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl">
@@ -61,22 +64,22 @@
       <!-- Terminal Interaktif -->
       <div class="flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
         <div class="bg-slate-800/70 px-4 py-2.5 flex items-center justify-between border-b border-slate-700">
-          <span class="text-xs font-mono text-emerald-400">bash@ptero-wa:~#</span>
+          <span class="text-xs font-mono text-emerald-400">termux@ptero-wa:~$</span>
           <div class="flex gap-2">
             <button onclick="sendSigInt()" class="bg-amber-600 hover:bg-amber-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">Stop Bot</button>
-            <button onclick="restartTerm()" class="bg-rose-600 hover:bg-rose-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">Restart</button>
+            <button onclick="restartTerm()" class="bg-rose-600 hover:bg-rose-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">Reset Terminal</button>
           </div>
         </div>
 
-        <div id="terminal-container" class="w-full h-[320px] bg-black p-2"></div>
+        <div id="terminal-container" class="w-full h-[340px] bg-black p-2"></div>
 
         <!-- Tombol Pintas -->
         <div class="bg-slate-950 border-t border-slate-800 p-2 flex flex-wrap gap-1.5">
           <button onclick="quickCmd('ls -la\n')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">ls -la</button>
-          <button onclick="quickCmd('rm -rf node_modules package-lock.json && npm install --legacy-peer-deps\n')" class="bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">Fix & npm install</button>
+          <button onclick="quickCmd('npm install --legacy-peer-deps\n')" class="bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">npm install</button>
           <button onclick="quickCmd('PORT=8080 npm start\n')" class="bg-emerald-700/40 hover:bg-emerald-600/50 text-emerald-200 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-600/50">npm start</button>
           <button onclick="quickCmd('PORT=8080 node index.js\n')" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">node index.js</button>
-          <button onclick="term.clear()" class="bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">Clear</button>
+          <button onclick="term.clear()" class="bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">Clear Layar</button>
         </div>
 
         <form onsubmit="submitCommand(event)" class="flex border-t border-slate-800 bg-slate-900">
@@ -91,7 +94,7 @@
     <section class="flex flex-col gap-6">
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
         <h2 class="text-sm font-semibold text-white mb-1">Upload Script Bot (Maks 200MB)</h2>
-        <p class="text-xs text-slate-400 mb-3">Upload file <code class="text-emerald-400">.zip</code> untuk diekstrak ke root.</p>
+        <p class="text-xs text-slate-400 mb-3">Otomatis diekstrak & di-backup ke Cloud Disk agar tidak hilang.</p>
 
         <label class="flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-emerald-500 rounded-lg p-5 cursor-pointer transition bg-slate-950/50">
           <span class="text-xs text-slate-300 font-medium text-center" id="file-label">Pilih file (.zip)</span>
@@ -109,7 +112,7 @@
           </div>
         </div>
 
-        <button onclick="uploadScript()" class="mt-3 w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2.5 rounded-lg transition">Upload & Ekstrak</button>
+        <button onclick="uploadScript()" class="mt-3 w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2.5 rounded-lg transition">Upload & Simpan Permanen</button>
       </div>
 
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl flex-1 flex flex-col">
@@ -144,7 +147,23 @@
 
     function quickCmd(cmd) { socket.emit('term-input', cmd); setTimeout(loadFiles, 1000); }
     function sendSigInt() { socket.emit('term-sigint'); }
-    function restartTerm() { socket.emit('term-restart'); }
+    function restartTerm() { term.clear(); socket.emit('term-restart'); }
+
+    async function manualBackup() {
+      const btn = document.getElementById('btn-backup');
+      btn.textContent = '⏳ Menyimpan...';
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/backup', { method: 'POST' });
+        const data = await res.json();
+        alert(data.message || data.error);
+      } catch (e) {
+        alert('Gagal menghubungi server.');
+      }
+      btn.textContent = '💾 Backup ke Cloud Disk Sekarang';
+      btn.disabled = false;
+      loadStats();
+    }
 
     function updateFileName() {
       const f = document.getElementById('script-file').files[0];
@@ -161,7 +180,7 @@
         const d = Math.floor(sec / (3600*24));
         const h = Math.floor((sec % (3600*24)) / 3600);
         const m = Math.floor((sec % 3600) / 60);
-        document.getElementById('stat-uptime').textContent = `${d}j ${h}m ${m}d`;
+        document.getElementById('stat-uptime').textContent = `${d}h ${h}j ${m}m`;
 
         document.getElementById('stat-cpu').textContent = data.cpu;
         document.getElementById('stat-memory').textContent = data.memory;
@@ -224,7 +243,7 @@
           bar.style.width = percent + '%';
           pct.textContent = percent + '%';
           if (percent === 100) {
-            status.textContent = 'Mengekstrak file & Mem-patch package... (Tunggu sebentar)';
+            status.textContent = 'Mengekstrak & Menyimpan ke Cloud Disk...';
           }
         }
       };
@@ -233,10 +252,11 @@
         try {
           const res = JSON.parse(xhr.responseText || '{}');
           if (xhr.status === 200) {
-            status.textContent = 'Berhasil! File siap digunakan.';
+            status.textContent = 'Berhasil! Tersimpan permanen.';
             bar.style.width = '100%';
             pct.textContent = '100%';
             loadFiles();
+            loadStats();
             setTimeout(() => wrap.classList.add('hidden'), 4000);
           } else {
             status.textContent = res.error || 'Gagal mengekstrak file.';
@@ -258,11 +278,8 @@
       xhr.send(formData);
     }
 
-    // Eksekusi langsung saat halaman dimuat agar indikator tidak hilang
     loadFiles();
     loadStats();
-
-    // Perbarui otomatis secara berkala
     setInterval(loadStats, 3000);
     setInterval(loadFiles, 5000);
   </script>
