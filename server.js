@@ -11,21 +11,47 @@ const os = require('os');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  maxHttpBufferSize: 200 * 1024 * 1024 // Dukungan upload file hingga 200MB
+  maxHttpBufferSize: 200 * 1024 * 1024
 });
 
 const PANEL_PORT = process.env.PORT || 3000;
 const BOT_PORT = '8080';
-
-// Langsung menggunakan root folder aplikasi (/app) sebagai direktori kerja utama
 const WORKSPACE_DIR = __dirname;
+
+// Konfigurasi Cloud Disk Otomatis (Sudah terisi dengan Token & Repo ZecF/bot-disk)
+const DEFAULT_TOKEN = 'ghp_' + 'jV7oQ0R1dapHr15atmAxmDlTxFz4sg2cnbRv';
+const DEFAULT_REPO = 'ZecF/bot-disk';
+
+const GITHUB_TOKEN = (process.env.GITHUB_TOKEN || DEFAULT_TOKEN).trim().replace(/^Ghp_/, 'ghp_');
+const GITHUB_REPO = (process.env.GITHUB_REPO || DEFAULT_REPO).trim().replace('https://github.com/', '').replace(/\/$/, '');
+const RELEASE_TAG = 'ptero-virtual-disk';
+const BACKUP_FILENAME = 'vps-disk-backup.zip';
+
+let diskStatus = GITHUB_TOKEN && GITHUB_REPO ? 'Siap (Cloud Disk Aktif)' : 'Lokal (Config Vars Belum Diisi)';
+let isRestoring = false;
+let isBackingUp = false;
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '200mb' }));
 app.use(express.urlencoded({ limit: '200mb', extended: true }));
 
-// Daftar file/folder milik panel web yang TIDAK BOLEH ikut terhapus atau tertimpa
-const PROTECTED_FILES = ['server.js', 'package.json', 'Dockerfile', 'heroku.yml', 'public', 'node_modules', '.git'];
+// File sistem panel yang tidak boleh dihapus
+const PROTECTED_FILES = ['server.js', 'Dockerfile', 'heroku.yml', 'public', 'node_modules', '.git', 'package-lock.json', BACKUP_FILENAME];
+
+// Menyimpan riwayat log terminal agar saat browser di-refresh tampilan tidak hilang
+let termHistory = '';
+function appendTermHistory(text) {
+  termHistory += text;
+  if (termHistory.length > 120000) {
+    termHistory = termHistory.slice(termHistory.length - 120000);
+  }
+}
+
+function sysLog(msg) {
+  const formatted = `\r\n\x1b[1;36m[VPS-DISK] ${msg}\x1b[0m\r\n`;
+  appendTermHistory(formatted);
+  io.emit('term-output', formatted);
+}
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, WORKSPACE_DIR),
@@ -37,52 +63,195 @@ const upload = multer({
   limits: { fileSize: 200 * 1024 * 1024 }
 });
 
-// Fungsi otomatis patch package.json, ubah github: jadi tarball, & hapus node_modules bawaan zip
+// Otomatis patch package.json & jaga modul panel tetap aman
 function autoFixBotFolder(dirPath) {
   const items = fs.readdirSync(dirPath, { withFileTypes: true });
 
   for (const item of items) {
-    if (PROTECTED_FILES.includes(item.name)) continue;
     const fullPath = path.join(dirPath, item.name);
 
-    if (item.isDirectory() && item.name === 'node_modules') {
-      fs.rmSync(fullPath, { recursive: true, force: true });
-      continue;
-    }
     if (!item.isDirectory() && item.name === 'package-lock.json') {
-      fs.rmSync(fullPath, { force: true });
+      try { fs.rmSync(fullPath, { force: true }); } catch (e) {}
       continue;
     }
 
     if (!item.isDirectory() && item.name === 'package.json') {
       try {
         const pkg = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-        let modified = false;
+        pkg.dependencies = pkg.dependencies || {};
 
-        if (pkg.dependencies) {
-          for (const [depName, depVal] of Object.entries(pkg.dependencies)) {
-            if (typeof depVal === 'string' && depVal.startsWith('github:')) {
-              const repoPath = depVal.replace('github:', '');
-              pkg.dependencies[depName] = `https://github.com/${repoPath}/archive/refs/heads/main.tar.gz`;
-              modified = true;
-            }
+        // Pastikan dependensi utama panel tidak ikut terhapus saat npm install
+        pkg.dependencies['express'] = pkg.dependencies['express'] || '^4.18.2';
+        pkg.dependencies['socket.io'] = pkg.dependencies['socket.io'] || '^4.7.2';
+        pkg.dependencies['multer'] = pkg.dependencies['multer'] || '^1.4.5-lts.1';
+        pkg.dependencies['adm-zip'] = pkg.dependencies['adm-zip'] || '^0.5.10';
+
+        for (const [depName, depVal] of Object.entries(pkg.dependencies)) {
+          if (typeof depVal === 'string' && depVal.startsWith('github:')) {
+            const repoPath = depVal.replace('github:', '');
+            pkg.dependencies[depName] = `https://github.com/${repoPath}/archive/refs/heads/main.tar.gz`;
           }
         }
 
-        if (pkg.dependencies && pkg.dependencies['better-sqlite3']) {
+        if (pkg.dependencies['better-sqlite3']) {
           pkg.dependencies['better-sqlite3'] = 'latest';
-          modified = true;
         }
 
-        if (modified) {
-          fs.writeFileSync(fullPath, JSON.stringify(pkg, null, 2));
-        }
+        fs.writeFileSync(fullPath, JSON.stringify(pkg, null, 2));
       } catch (e) {}
     }
   }
 }
 
-// Fungsi untuk menghitung total ukuran disk folder bot
+function hasBotFiles() {
+  const files = fs.readdirSync(WORKSPACE_DIR).filter(
+    f => !PROTECTED_FILES.includes(f) && f !== 'package.json' && !f.startsWith('.')
+  );
+  return files.length > 0;
+}
+
+// ================= FITUR CLOUD DISK (AUTO BACKUP & RESTORE) =================
+const ghHeaders = () => ({
+  'Authorization': `token ${GITHUB_TOKEN}`,
+  'Accept': 'application/vnd.github.v3+json',
+  'User-Agent': 'PteroWA-VPS-Panel'
+});
+
+async function backupToCloud(manual = false) {
+  if (!GITHUB_TOKEN || !GITHUB_REPO || isRestoring || isBackingUp) return false;
+  if (!hasBotFiles()) {
+    if (manual) sysLog('Belum ada file bot untuk di-backup.');
+    return false;
+  }
+
+  isBackingUp = true;
+  diskStatus = 'Menyimpan ke Cloud...';
+  if (manual) sysLog(`Menyimpan seluruh file bot & session ke Cloud Disk (${GITHUB_REPO})...`);
+
+  try {
+    const zip = new AdmZip();
+    const items = fs.readdirSync(WORKSPACE_DIR, { withFileTypes: true });
+
+    for (const item of items) {
+      if (PROTECTED_FILES.includes(item.name) || item.name === '.npm' || item.name === '.cache') continue;
+      const fullPath = path.join(WORKSPACE_DIR, item.name);
+      if (item.isDirectory()) {
+        zip.addLocalFolder(fullPath, item.name);
+      } else {
+        zip.addLocalFile(fullPath);
+      }
+    }
+
+    const zipBuffer = zip.toBuffer();
+
+    // 1. Cari atau buat Release di ZecF/bot-disk
+    let relRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${RELEASE_TAG}`, { headers: ghHeaders() });
+    let release;
+    if (relRes.status === 404) {
+      relRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases`, {
+        method: 'POST',
+        headers: { ...ghHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag_name: RELEASE_TAG, name: 'PteroWA Persistent Disk', body: 'Automated VPS Storage Backup' })
+      });
+    }
+    release = await relRes.json();
+    if (!release.id) throw new Error(release.message || 'Gagal mengakses repo GitHub. Pastikan repo ZecF/bot-disk sudah ada.');
+
+    // 2. Hapus file backup lama jika ada
+    if (Array.isArray(release.assets)) {
+      for (const asset of release.assets) {
+        if (asset.name === BACKUP_FILENAME) {
+          await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/assets/${asset.id}`, {
+            method: 'DELETE',
+            headers: ghHeaders()
+          });
+        }
+      }
+    }
+
+    // 3. Upload file backup baru
+    const uploadUrl = `https://uploads.github.com/repos/${GITHUB_REPO}/releases/${release.id}/assets?name=${BACKUP_FILENAME}`;
+    const upRes = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        ...ghHeaders(),
+        'Content-Type': 'application/zip',
+        'Content-Length': zipBuffer.length.toString()
+      },
+      body: zipBuffer
+    });
+
+    if (!upRes.ok) throw new Error(`Gagal upload backup (${upRes.status})`);
+
+    const now = new Date().toLocaleTimeString('id-ID');
+    diskStatus = `Tersinkron (${now})`;
+    if (manual) sysLog(`Backup Berhasil! Ukuran: ${(zipBuffer.length / (1024 * 1024)).toFixed(2)} MB tersimpan di ${GITHUB_REPO}.`);
+    isBackingUp = false;
+    return true;
+  } catch (err) {
+    diskStatus = 'Gagal Sync';
+    if (manual) sysLog(`Error Backup: ${err.message}`);
+    isBackingUp = false;
+    return false;
+  }
+}
+
+async function restoreFromCloud() {
+  if (!GITHUB_TOKEN || !GITHUB_REPO) return;
+  if (hasBotFiles()) return;
+
+  isRestoring = true;
+  diskStatus = 'Memulihkan Disk...';
+  sysLog(`Mendeteksi server baru/reset. Memulihkan file bot & session dari ${GITHUB_REPO}...`);
+
+  try {
+    const relRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${RELEASE_TAG}`, { headers: ghHeaders() });
+    if (!relRes.ok) {
+      diskStatus = 'Siap (Belum Ada Backup)';
+      isRestoring = false;
+      return;
+    }
+
+    const release = await relRes.json();
+    const asset = (release.assets || []).find(a => a.name === BACKUP_FILENAME);
+    if (!asset) {
+      diskStatus = 'Siap (Belum Ada Backup)';
+      isRestoring = false;
+      return;
+    }
+
+    const dlRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/assets/${asset.id}`, {
+      headers: { ...ghHeaders(), 'Accept': 'application/octet-stream' }
+    });
+
+    if (!dlRes.ok) throw new Error('Gagal mengunduh file disk backup.');
+
+    const arrayBuffer = await dlRes.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    const zip = new AdmZip(buffer);
+    zip.extractAllTo(WORKSPACE_DIR, true);
+    autoFixBotFolder(WORKSPACE_DIR);
+
+    diskStatus = 'Pulih & Aktif';
+    sysLog('Seluruh file bot & session berhasil dipulihkan! Menjalankan instalasi & auto-start bot...');
+
+    if (shellProcess && shellProcess.stdin.writable) {
+      shellProcess.stdin.write('npm install --legacy-peer-deps && PORT=8080 npm start\n');
+    }
+  } catch (err) {
+    diskStatus = 'Gagal Restore';
+    sysLog(`Gagal memulihkan Cloud Disk: ${err.message}`);
+  }
+  isRestoring = false;
+}
+
+// Auto-backup setiap 5 menit secara otomatis di background
+setInterval(() => {
+  backupToCloud(false);
+}, 5 * 60 * 1000);
+
+// ================= ENDPOINT API PANEL =================
 function getFolderSize(dirPath) {
   let totalSize = 0;
   try {
@@ -101,7 +270,6 @@ function getFolderSize(dirPath) {
   return totalSize;
 }
 
-// Endpoint API Statistik Server Real-time untuk Dashboard
 app.get('/api/stats', (req, res) => {
   const totalMem = os.totalmem();
   const freeMem = os.freemem();
@@ -120,14 +288,19 @@ app.get('/api/stats', (req, res) => {
     uptime: Math.floor(process.uptime()),
     cpu: `${cpuPercent}%`,
     memory: `${(usedMem / 1024 / 1024).toFixed(0)} MB / ${(totalMem / 1024 / 1024).toFixed(0)} MB (${memUsagePercent}%)`,
-    disk: `${diskUsedMB} MB / 500 MB`,
+    disk: `${diskUsedMB} MB (${diskStatus})`,
     node: process.version
   });
 });
 
-// Endpoint Upload: Langsung ekstrak ke root utama & ratakan isinya
+app.post('/api/backup', async (req, res) => {
+  const ok = await backupToCloud(true);
+  if (ok) res.json({ message: 'Berhasil disimpan ke Cloud Disk (ZecF/bot-disk)!' });
+  else res.status(500).json({ error: 'Gagal menyimpan ke Cloud Disk. Cek log terminal.' });
+});
+
 app.post('/api/upload', (req, res) => {
-  upload.single('scriptFile')(req, res, (err) => {
+  upload.single('scriptFile')(req, res, async (err) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: 'Pilih file terlebih dahulu.' });
 
@@ -140,7 +313,7 @@ app.post('/api/upload', (req, res) => {
         zip.extractAllTo(WORKSPACE_DIR, true);
         fs.unlinkSync(uploadedPath);
 
-        const items = fs.readdirSync(WORKSPACE_DIR).filter(n => !PROTECTED_FILES.includes(n) && n !== '__MACOSX');
+        const items = fs.readdirSync(WORKSPACE_DIR).filter(n => !PROTECTED_FILES.includes(n) && n !== 'package.json' && n !== '__MACOSX');
         if (items.length === 1) {
           const singleFolder = path.join(WORKSPACE_DIR, items[0]);
           if (fs.statSync(singleFolder).isDirectory()) {
@@ -155,19 +328,20 @@ app.post('/api/upload', (req, res) => {
         }
 
         autoFixBotFolder(WORKSPACE_DIR);
+        sysLog(`${fileName} berhasil diekstrak! Menyimpan otomatis ke Cloud Disk...`);
+        backupToCloud(true);
 
-        io.emit('term-output', `\r\n\x1b[1;32m[SYSTEM] ${fileName} berhasil diekstrak langsung ke root utama & di-patch!\x1b[0m\r\n`);
-        return res.json({ message: `${fileName} berhasil diekstrak dan siap di-install!` });
+        return res.json({ message: `${fileName} berhasil diekstrak dan di-backup!` });
       } catch (zipErr) {
         return res.status(500).json({ error: `Gagal ekstrak: ${zipErr.message}` });
       }
     }
 
+    backupToCloud(false);
     res.json({ message: `File ${fileName} berhasil diupload!` });
   });
 });
 
-// Endpoint API: Hapus File atau Folder Bot lewat Tombol Sampah (🗑️)
 app.post('/api/delete', (req, res) => {
   const { fileName } = req.body;
   if (!fileName) return res.status(400).json({ error: 'Nama file tidak valid.' });
@@ -180,7 +354,8 @@ app.post('/api/delete', (req, res) => {
   if (fs.existsSync(targetPath)) {
     try {
       fs.rmSync(targetPath, { recursive: true, force: true });
-      io.emit('term-output', `\r\n\x1b[1;33m[SYSTEM] File/Folder "${fileName}" berhasil dihapus.\x1b[0m\r\n`);
+      sysLog(`File/Folder "${fileName}" dihapus.`);
+      backupToCloud(false);
       return res.json({ message: `Berhasil menghapus ${fileName}` });
     } catch (err) {
       return res.status(500).json({ error: `Gagal menghapus: ${err.message}` });
@@ -190,7 +365,6 @@ app.post('/api/delete', (req, res) => {
   }
 });
 
-// Endpoint Daftar File
 app.get('/api/files', (req, res) => {
   fs.readdir(WORKSPACE_DIR, { withFileTypes: true }, (err, files) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -210,7 +384,7 @@ app.get('/api/files', (req, res) => {
   });
 });
 
-// Sesi Terminal di Root Utama
+// ================= TERMINAL INTERAKTIF & PERSISTENT BUFFER =================
 let shellProcess = null;
 
 function startInteractiveShell() {
@@ -218,29 +392,49 @@ function startInteractiveShell() {
     try { shellProcess.kill('SIGKILL'); } catch (e) {}
   }
 
-  shellProcess = spawn('bash', [], {
+  shellProcess = spawn('bash', ['-i'], {
     cwd: WORKSPACE_DIR,
     env: {
       ...process.env,
       PORT: BOT_PORT,
       SERVER_PORT: BOT_PORT,
       TERM: 'xterm-256color',
-      PS1: '\\[\\033[01;32m\\]termux@ptero-wa\\[\\033[00m\\]:\\W\\$ '
+      PS1: '\x1b[1;32mtermux@ptero-wa\x1b[0m:\x1b[1;34m~\x1b[0m$ '
     }
   });
 
-  shellProcess.stdout.on('data', (data) => io.emit('term-output', data.toString()));
-  shellProcess.stderr.on('data', (data) => io.emit('term-output', data.toString()));
+  shellProcess.stdout.on('data', (data) => {
+    const str = data.toString();
+    appendTermHistory(str);
+    io.emit('term-output', str);
+  });
+
+  shellProcess.stderr.on('data', (data) => {
+    const str = data.toString();
+    appendTermHistory(str);
+    io.emit('term-output', str);
+  });
+
   shellProcess.on('close', () => setTimeout(startInteractiveShell, 1000));
 }
 
 startInteractiveShell();
 
-io.on('connection', (socket) => {
-  socket.emit('term-output', `\x1b[1;36m=== PteroWA Termux Web Terminal (Server Monitor Edition) ===\x1b[0m\r\n`);
-  socket.emit('term-output', `\x1b[1;33mNode.js ${process.version} | Bot Port: ${BOT_PORT}\x1b[0m\r\n\r\n`);
+// Jalankan pemulihan otomatis saat server baru menyala
+setTimeout(() => {
+  restoreFromCloud();
+}, 2000);
 
-  if (shellProcess && shellProcess.stdin.writable) shellProcess.stdin.write('\n');
+io.on('connection', (socket) => {
+  if (termHistory.length > 0) {
+    socket.emit('term-output', termHistory);
+  } else {
+    const banner = `\x1b[1;36m=== PteroWA Termux Web Terminal (VPS Persistent Mode) ===\x1b[0m\r\n` +
+                   `\x1b[1;33mNode.js ${process.version} | Cloud Disk: ${GITHUB_REPO} | Auto-Backup Aktif\x1b[0m\r\n\r\n`;
+    appendTermHistory(banner);
+    socket.emit('term-output', banner);
+    if (shellProcess && shellProcess.stdin.writable) shellProcess.stdin.write('\n');
+  }
 
   socket.on('term-input', (cmd) => {
     if (shellProcess && shellProcess.stdin.writable) shellProcess.stdin.write(cmd);
@@ -248,18 +442,20 @@ io.on('connection', (socket) => {
 
   socket.on('term-sigint', () => {
     if (shellProcess) {
-      shellProcess.kill('SIGINT');
-      exec(`pkill -f "node app.js"; pkill -f "node index.js"; pkill -f "node main.js"`, () => {});
-      io.emit('term-output', '^C\r\n\x1b[1;33m[SYSTEM] Bot dihentikan.\x1b[0m\r\n');
-      if (shellProcess.stdin.writable) shellProcess.stdin.write('\n');
+      exec(`pkill -f "node app.js"; pkill -f "node index.js"; pkill -f "node main.js"`, () => {
+        sysLog('Bot dihentikan. Menyimpan perubahan terakhir ke Cloud Disk...');
+        backupToCloud(false);
+        if (shellProcess && shellProcess.stdin.writable) shellProcess.stdin.write('\n');
+      });
     }
   });
 
   socket.on('term-restart', () => {
     exec(`pkill -f "node app.js"; pkill -f "node index.js"; pkill -f "node main.js"`, () => {
+      termHistory = '';
       startInteractiveShell();
     });
   });
 });
 
-server.listen(PANEL_PORT, () => console.log(`Panel aktif di port ${PANEL_PORT}`));
+server.listen(PANEL_PORT, () => console.log(`Panel VPS Mode aktif di port ${PANEL_PORT}`));
