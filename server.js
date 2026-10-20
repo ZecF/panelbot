@@ -18,7 +18,7 @@ const PANEL_PORT = process.env.PORT || 3000;
 const BOT_PORT = '8080';
 const WORKSPACE_DIR = __dirname;
 
-// Konfigurasi Cloud Disk Otomatis (Sudah terisi dengan Token & Repo ZecF/bot-disk)
+// Konfigurasi Cloud Disk Otomatis (Token & Repo ZecF/bot-disk)
 const DEFAULT_TOKEN = 'ghp_' + 'jV7oQ0R1dapHr15atmAxmDlTxFz4sg2cnbRv';
 const DEFAULT_REPO = 'ZecF/bot-disk';
 
@@ -35,10 +35,18 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '200mb' }));
 app.use(express.urlencoded({ limit: '200mb', extended: true }));
 
-// File sistem panel yang tidak boleh dihapus
+// File sistem panel yang dilindungi agar panel tidak rusak
 const PROTECTED_FILES = ['server.js', 'Dockerfile', 'heroku.yml', 'public', 'node_modules', '.git', 'package-lock.json', BACKUP_FILENAME];
 
-// Menyimpan riwayat log terminal agar saat browser di-refresh tampilan tidak hilang
+function getSafePath(relPath = '') {
+  const cleaned = String(relPath || '').replace(/^[/\\]+/, '');
+  const resolved = path.resolve(WORKSPACE_DIR, cleaned);
+  if (!resolved.startsWith(WORKSPACE_DIR)) {
+    throw new Error('Akses direktori tidak diizinkan.');
+  }
+  return resolved;
+}
+
 let termHistory = '';
 function appendTermHistory(text) {
   termHistory += text;
@@ -54,7 +62,15 @@ function sysLog(msg) {
 }
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, WORKSPACE_DIR),
+  destination: (req, file, cb) => {
+    try {
+      const targetDir = getSafePath(req.query.dir || '');
+      fs.mkdirSync(targetDir, { recursive: true });
+      cb(null, targetDir);
+    } catch (e) {
+      cb(null, WORKSPACE_DIR);
+    }
+  },
   filename: (req, file, cb) => cb(null, file.originalname)
 });
 
@@ -80,7 +96,6 @@ function autoFixBotFolder(dirPath) {
         const pkg = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
         pkg.dependencies = pkg.dependencies || {};
 
-        // Pastikan dependensi utama panel tidak ikut terhapus saat npm install
         pkg.dependencies['express'] = pkg.dependencies['express'] || '^4.18.2';
         pkg.dependencies['socket.io'] = pkg.dependencies['socket.io'] || '^4.7.2';
         pkg.dependencies['multer'] = pkg.dependencies['multer'] || '^1.4.5-lts.1';
@@ -144,7 +159,6 @@ async function backupToCloud(manual = false) {
 
     const zipBuffer = zip.toBuffer();
 
-    // 1. Cari atau buat Release di ZecF/bot-disk
     let relRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${RELEASE_TAG}`, { headers: ghHeaders() });
     let release;
     if (relRes.status === 404) {
@@ -155,9 +169,8 @@ async function backupToCloud(manual = false) {
       });
     }
     release = await relRes.json();
-    if (!release.id) throw new Error(release.message || 'Gagal mengakses repo GitHub. Pastikan repo ZecF/bot-disk sudah ada.');
+    if (!release.id) throw new Error(release.message || 'Gagal mengakses repo GitHub.');
 
-    // 2. Hapus file backup lama jika ada
     if (Array.isArray(release.assets)) {
       for (const asset of release.assets) {
         if (asset.name === BACKUP_FILENAME) {
@@ -169,7 +182,6 @@ async function backupToCloud(manual = false) {
       }
     }
 
-    // 3. Upload file backup baru
     const uploadUrl = `https://uploads.github.com/repos/${GITHUB_REPO}/releases/${release.id}/assets?name=${BACKUP_FILENAME}`;
     const upRes = await fetch(uploadUrl, {
       method: 'POST',
@@ -246,12 +258,11 @@ async function restoreFromCloud() {
   isRestoring = false;
 }
 
-// Auto-backup setiap 5 menit secara otomatis di background
 setInterval(() => {
   backupToCloud(false);
 }, 5 * 60 * 1000);
 
-// ================= ENDPOINT API PANEL =================
+// ================= ENDPOINT API PANEL & FILE/FOLDER MANAGER =================
 function getFolderSize(dirPath) {
   let totalSize = 0;
   try {
@@ -306,24 +317,27 @@ app.post('/api/upload', (req, res) => {
 
     const uploadedPath = req.file.path;
     const fileName = req.file.originalname;
+    const targetDir = path.dirname(uploadedPath);
 
     if (fileName.endsWith('.zip')) {
       try {
         const zip = new AdmZip(uploadedPath);
-        zip.extractAllTo(WORKSPACE_DIR, true);
+        zip.extractAllTo(targetDir, true);
         fs.unlinkSync(uploadedPath);
 
-        const items = fs.readdirSync(WORKSPACE_DIR).filter(n => !PROTECTED_FILES.includes(n) && n !== 'package.json' && n !== '__MACOSX');
-        if (items.length === 1) {
-          const singleFolder = path.join(WORKSPACE_DIR, items[0]);
-          if (fs.statSync(singleFolder).isDirectory()) {
-            for (const subItem of fs.readdirSync(singleFolder)) {
-              const src = path.join(singleFolder, subItem);
-              const dest = path.join(WORKSPACE_DIR, subItem);
-              if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true });
-              fs.renameSync(src, dest);
+        if (targetDir === WORKSPACE_DIR) {
+          const items = fs.readdirSync(WORKSPACE_DIR).filter(n => !PROTECTED_FILES.includes(n) && n !== 'package.json' && n !== '__MACOSX');
+          if (items.length === 1) {
+            const singleFolder = path.join(WORKSPACE_DIR, items[0]);
+            if (fs.statSync(singleFolder).isDirectory()) {
+              for (const subItem of fs.readdirSync(singleFolder)) {
+                const src = path.join(singleFolder, subItem);
+                const dest = path.join(WORKSPACE_DIR, subItem);
+                if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true });
+                fs.renameSync(src, dest);
+              }
+              fs.rmdirSync(singleFolder);
             }
-            fs.rmdirSync(singleFolder);
           }
         }
 
@@ -342,46 +356,184 @@ app.post('/api/upload', (req, res) => {
   });
 });
 
-app.post('/api/delete', (req, res) => {
-  const { fileName } = req.body;
-  if (!fileName) return res.status(400).json({ error: 'Nama file tidak valid.' });
+// 1. Daftar File & Folder
+app.get('/api/files', (req, res) => {
+  try {
+    const relDir = String(req.query.dir || '').replace(/^[/\\]+/, '');
+    const targetDir = getSafePath(relDir);
 
-  if (PROTECTED_FILES.includes(fileName)) {
-    return res.status(403).json({ error: 'File sistem panel tidak boleh dihapus!' });
-  }
+    if (!fs.existsSync(targetDir)) return res.json([]);
 
-  const targetPath = path.join(WORKSPACE_DIR, fileName);
-  if (fs.existsSync(targetPath)) {
-    try {
-      fs.rmSync(targetPath, { recursive: true, force: true });
-      sysLog(`File/Folder "${fileName}" dihapus.`);
-      backupToCloud(false);
-      return res.json({ message: `Berhasil menghapus ${fileName}` });
-    } catch (err) {
-      return res.status(500).json({ error: `Gagal menghapus: ${err.message}` });
-    }
-  } else {
-    return res.status(404).json({ error: 'File tidak ditemukan.' });
+    fs.readdir(targetDir, { withFileTypes: true }, (err, files) => {
+      if (err) return res.status(500).json({ error: err.message });
+      const fileList = files
+        .filter(f => !(relDir === '' && PROTECTED_FILES.includes(f.name)))
+        .map(f => {
+          let sizeStr = 'Folder';
+          const itemRelPath = relDir ? `${relDir}/${f.name}` : f.name;
+          if (!f.isDirectory()) {
+            try {
+              const stats = fs.statSync(path.join(targetDir, f.name));
+              sizeStr = stats.size < 1024 * 1024
+                ? `${(stats.size / 1024).toFixed(1)} KB`
+                : `${(stats.size / (1024 * 1024)).toFixed(2)} MB`;
+            } catch (e) {}
+          }
+          return {
+            name: f.name,
+            path: itemRelPath,
+            isDirectory: f.isDirectory(),
+            size: sizeStr
+          };
+        })
+        .sort((a, b) => (a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1));
+
+      res.json(fileList);
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
   }
 });
 
-app.get('/api/files', (req, res) => {
-  fs.readdir(WORKSPACE_DIR, { withFileTypes: true }, (err, files) => {
-    if (err) return res.status(500).json({ error: err.message });
-    const fileList = files
-      .filter(f => !PROTECTED_FILES.includes(f.name))
-      .map(f => {
-        let sizeStr = '-';
-        if (!f.isDirectory()) {
-          try {
-            const stats = fs.statSync(path.join(WORKSPACE_DIR, f.name));
-            sizeStr = `${(stats.size / 1024).toFixed(1)} KB`;
-          } catch (e) {}
-        }
-        return { name: f.name, isDirectory: f.isDirectory(), size: sizeStr };
-      });
-    res.json(fileList);
-  });
+// 2. Baca Isi File untuk Diedit
+app.get('/api/file-content', (req, res) => {
+  try {
+    const relPath = String(req.query.path || '').replace(/^[/\\]+/, '');
+    if (!relPath) return res.status(400).json({ error: 'Path file kosong.' });
+
+    const rootItem = relPath.split('/')[0];
+    if (PROTECTED_FILES.includes(rootItem)) {
+      return res.status(403).json({ error: 'File sistem panel tidak dapat diedit!' });
+    }
+
+    const fullPath = getSafePath(relPath);
+    if (!fs.existsSync(fullPath) || fs.statSync(fullPath).isDirectory()) {
+      return res.status(404).json({ error: 'File tidak ditemukan atau berupa folder.' });
+    }
+
+    const stats = fs.statSync(fullPath);
+    if (stats.size > 5 * 1024 * 1024) {
+      return res.status(400).json({ error: 'Ukuran file terlalu besar untuk diedit di web (>5MB).' });
+    }
+
+    const content = fs.readFileSync(fullPath, 'utf8');
+    res.json({ path: relPath, content });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 3. Simpan File (Edit File atau Buat File Baru)
+app.post('/api/save-file', (req, res) => {
+  try {
+    const { filePath, content } = req.body;
+    const relPath = String(filePath || '').replace(/^[/\\]+/, '');
+    if (!relPath) return res.status(400).json({ error: 'Nama/path file tidak boleh kosong.' });
+
+    const rootItem = relPath.split('/')[0];
+    if (PROTECTED_FILES.includes(rootItem)) {
+      return res.status(403).json({ error: 'File sistem panel tidak boleh ditimpa!' });
+    }
+
+    const fullPath = getSafePath(relPath);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, content ?? '', 'utf8');
+
+    if (relPath === 'package.json') {
+      autoFixBotFolder(WORKSPACE_DIR);
+    }
+
+    sysLog(`File "${relPath}" berhasil disimpan.`);
+    backupToCloud(false);
+
+    res.json({ message: `File ${relPath} berhasil disimpan & di-backup!` });
+  } catch (e) {
+    res.status(500).json({ error: `Gagal menyimpan file: ${e.message}` });
+  }
+});
+
+// 4. Buat Folder Baru
+app.post('/api/mkdir', (req, res) => {
+  try {
+    const { folderPath } = req.body;
+    const relPath = String(folderPath || '').replace(/^[/\\]+/, '');
+    if (!relPath) return res.status(400).json({ error: 'Nama folder tidak boleh kosong.' });
+
+    const rootItem = relPath.split('/')[0];
+    if (PROTECTED_FILES.includes(rootItem)) {
+      return res.status(403).json({ error: 'Nama folder tersebut dilindungi sistem!' });
+    }
+
+    const fullPath = getSafePath(relPath);
+    if (fs.existsSync(fullPath)) {
+      return res.status(400).json({ error: 'Folder atau file dengan nama tersebut sudah ada.' });
+    }
+
+    fs.mkdirSync(fullPath, { recursive: true });
+    sysLog(`Folder "${relPath}" berhasil dibuat.`);
+    backupToCloud(false);
+
+    res.json({ message: `Folder ${relPath} berhasil dibuat!` });
+  } catch (e) {
+    res.status(500).json({ error: `Gagal membuat folder: ${e.message}` });
+  }
+});
+
+// 5. Ganti Nama (Rename) / Pindahkan File & Folder
+app.post('/api/rename', (req, res) => {
+  try {
+    const { oldPath, newPath } = req.body;
+    const relOld = String(oldPath || '').replace(/^[/\\]+/, '');
+    const relNew = String(newPath || '').replace(/^[/\\]+/, '');
+
+    if (!relOld || !relNew) return res.status(400).json({ error: 'Nama lama dan baru wajib diisi.' });
+
+    if (PROTECTED_FILES.includes(relOld.split('/')[0]) || PROTECTED_FILES.includes(relNew.split('/')[0])) {
+      return res.status(403).json({ error: 'File/folder sistem panel tidak boleh diubah!' });
+    }
+
+    const fullOld = getSafePath(relOld);
+    const fullNew = getSafePath(relNew);
+
+    if (!fs.existsSync(fullOld)) return res.status(404).json({ error: 'File/Folder asal tidak ditemukan.' });
+    if (fs.existsSync(fullNew)) return res.status(400).json({ error: 'Nama tujuan sudah digunakan.' });
+
+    fs.mkdirSync(path.dirname(fullNew), { recursive: true });
+    fs.renameSync(fullOld, fullNew);
+
+    sysLog(`"${relOld}" diubah menjadi "${relNew}".`);
+    backupToCloud(false);
+
+    res.json({ message: `Berhasil diubah menjadi ${relNew}` });
+  } catch (e) {
+    res.status(500).json({ error: `Gagal mengubah nama: ${e.message}` });
+  }
+});
+
+// 6. Hapus File atau Folder
+app.post('/api/delete', (req, res) => {
+  try {
+    const { fileName } = req.body;
+    const relPath = String(fileName || '').replace(/^[/\\]+/, '');
+    if (!relPath) return res.status(400).json({ error: 'Nama file tidak valid.' });
+
+    const rootItem = relPath.split('/')[0];
+    if (PROTECTED_FILES.includes(rootItem)) {
+      return res.status(403).json({ error: 'File sistem panel tidak boleh dihapus!' });
+    }
+
+    const targetPath = getSafePath(relPath);
+    if (fs.existsSync(targetPath)) {
+      fs.rmSync(targetPath, { recursive: true, force: true });
+      sysLog(`File/Folder "${relPath}" dihapus.`);
+      backupToCloud(false);
+      return res.json({ message: `Berhasil menghapus ${relPath}` });
+    } else {
+      return res.status(404).json({ error: 'File tidak ditemukan.' });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: `Gagal menghapus: ${err.message}` });
+  }
 });
 
 // ================= TERMINAL INTERAKTIF & PERSISTENT BUFFER =================
@@ -420,7 +572,6 @@ function startInteractiveShell() {
 
 startInteractiveShell();
 
-// Jalankan pemulihan otomatis saat server baru menyala
 setTimeout(() => {
   restoreFromCloud();
 }, 2000);
