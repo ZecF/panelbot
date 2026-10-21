@@ -73,11 +73,11 @@
 
         <div id="terminal-container" class="w-full h-[340px] bg-black p-2"></div>
 
-        <!-- Tombol Pintas (Dilengkapi Fix SQLite & Start app.js untuk JH-Zapo) -->
+        <!-- Tombol Pintas Anti Core-Dumped -->
         <div class="bg-slate-950 border-t border-slate-800 p-2 flex flex-wrap gap-1.5">
           <button onclick="quickCmd('ls -la')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">ls -la</button>
-          <button onclick="quickCmd('rm -rf node_modules package-lock.json && npm install --legacy-peer-deps && npm rebuild better-sqlite3')" class="bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 text-xs font-mono px-2.5 py-1.5 rounded border border-amber-500/40">🛠️ Install & Fix SQLite</button>
-          <button onclick="quickCmd('PORT=8080 node app.js')" class="bg-emerald-700/40 hover:bg-emerald-600/50 text-emerald-200 text-xs font-mono px-2.5 py-1.5 rounded border border-emerald-500/50">▶️ Start app.js (JH-Zapo)</button>
+          <button onclick="fixAndInstall()" class="bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 text-xs font-mono px-2.5 py-1.5 rounded border border-amber-500/40">🛡️ Install Anti Core-Dumped</button>
+          <button onclick="startBotSafe()" class="bg-emerald-700/40 hover:bg-emerald-600/50 text-emerald-200 text-xs font-mono px-2.5 py-1.5 rounded border border-emerald-500/50">▶️ Start JH-Zapo (app.js)</button>
           <button onclick="quickCmd('PORT=8080 npm start')" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">npm start</button>
           <button onclick="term.clear()" class="bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">Clear</button>
         </div>
@@ -94,7 +94,7 @@
     <section class="flex flex-col gap-6">
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
         <h2 class="text-sm font-semibold text-white mb-1">Upload File / Script ZIP (1x Klik Langsung Masuk)</h2>
-        <p class="text-xs text-slate-400 mb-3">Otomatis meratakan folder ZIP & langsung muncul di File Manager.</p>
+        <p class="text-xs text-slate-400 mb-3">Otomatis meratakan folder ZIP & memproteksi dari error SQLite.</p>
 
         <label class="flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-emerald-500 rounded-lg p-4 cursor-pointer transition bg-slate-950/50">
           <span class="text-xs text-slate-300 font-medium text-center" id="file-label">Pilih file (.zip / .js / .json)</span>
@@ -191,7 +191,6 @@
 
     window.addEventListener('resize', () => fitAddon.fit());
 
-    // Indikator status koneksi real-time agar tahu kalau koneksi sempat putus
     socket.on('connect', () => {
       document.getElementById('conn-dot').className = 'h-3 w-3 rounded-full bg-emerald-400 animate-pulse';
       document.getElementById('conn-badge').textContent = 'Online & Stabil';
@@ -205,7 +204,6 @@
     socket.on('term-output', (data) => term.write(data));
     socket.on('files-updated', () => loadFiles());
 
-    // Input langsung dari kolom bawah agar tidak pernah macet di HP Android
     function submitCommand(e) {
       e.preventDefault();
       const input = document.getElementById('cmd-input');
@@ -217,6 +215,19 @@
     function quickCmd(cmd) {
       socket.emit('term-input', cmd + '\n');
       setTimeout(loadFiles, 1500);
+    }
+
+    async function fixAndInstall() {
+      await fetch('/api/fix-coredump', { method: 'POST' });
+      quickCmd('rm -rf node_modules package-lock.json && npm install --legacy-peer-deps --ignore-scripts');
+      setTimeout(() => {
+        fetch('/api/fix-coredump', { method: 'POST' });
+      }, 8000);
+    }
+
+    async function startBotSafe() {
+      await fetch('/api/fix-coredump', { method: 'POST' });
+      quickCmd('PORT=8080 node app.js');
     }
 
     function sendSigInt() { socket.emit('term-sigint'); }
@@ -485,7 +496,7 @@
           bar.style.width = percent + '%';
           pct.textContent = percent + '%';
           if (percent === 100) {
-            status.textContent = 'Mengekstrak file...';
+            status.textContent = 'Mengekstrak & Memasang Patch Anti Core-Dumped...';
           }
         }
       };
