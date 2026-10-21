@@ -16,9 +16,9 @@
   <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-10">
     <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-3">
-        <span class="h-3 w-3 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span id="conn-dot" class="h-3 w-3 rounded-full bg-emerald-400 animate-pulse"></span>
         <h1 class="text-lg font-bold tracking-wide text-white">
-          PteroWA <span class="text-xs font-normal bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">VPS Persistent Mode</span>
+          PteroWA <span id="conn-badge" class="text-xs font-normal bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">Online & Stabil</span>
         </h1>
       </div>
       <button onclick="manualBackup()" id="btn-backup" class="bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shadow transition">
@@ -64,27 +64,27 @@
       <!-- Terminal Interaktif -->
       <div class="flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
         <div class="bg-slate-800/70 px-4 py-2.5 flex items-center justify-between border-b border-slate-700">
-          <span class="text-xs font-mono text-emerald-400">termux@ptero-wa:~$</span>
+          <span class="text-xs font-mono text-emerald-400">termux@ptero-wa:~/bot$</span>
           <div class="flex gap-2">
             <button onclick="sendSigInt()" class="bg-amber-600 hover:bg-amber-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">Stop Bot</button>
-            <button onclick="restartTerm()" class="bg-rose-600 hover:bg-rose-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">Reset Terminal</button>
+            <button onclick="restartTerm()" class="bg-rose-600 hover:bg-rose-500 text-white text-xs px-2.5 py-1 rounded font-medium transition">Unfreeze / Reset Terminal</button>
           </div>
         </div>
 
         <div id="terminal-container" class="w-full h-[340px] bg-black p-2"></div>
 
-        <!-- Tombol Pintas -->
+        <!-- Tombol Pintas (Dilengkapi Fix SQLite & Start app.js untuk JH-Zapo) -->
         <div class="bg-slate-950 border-t border-slate-800 p-2 flex flex-wrap gap-1.5">
-          <button onclick="quickCmd('ls -la\n')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">ls -la</button>
-          <button onclick="quickCmd('npm install --legacy-peer-deps\n')" class="bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">npm install</button>
-          <button onclick="quickCmd('PORT=8080 npm start\n')" class="bg-emerald-700/40 hover:bg-emerald-600/50 text-emerald-200 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-600/50">npm start</button>
-          <button onclick="quickCmd('PORT=8080 node index.js\n')" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">node index.js</button>
-          <button onclick="term.clear()" class="bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">Clear Layar</button>
+          <button onclick="quickCmd('ls -la')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">ls -la</button>
+          <button onclick="quickCmd('rm -rf node_modules package-lock.json && npm install --legacy-peer-deps && npm rebuild better-sqlite3')" class="bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 text-xs font-mono px-2.5 py-1.5 rounded border border-amber-500/40">🛠️ Install & Fix SQLite</button>
+          <button onclick="quickCmd('PORT=8080 node app.js')" class="bg-emerald-700/40 hover:bg-emerald-600/50 text-emerald-200 text-xs font-mono px-2.5 py-1.5 rounded border border-emerald-500/50">▶️ Start app.js (JH-Zapo)</button>
+          <button onclick="quickCmd('PORT=8080 npm start')" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">npm start</button>
+          <button onclick="term.clear()" class="bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-mono px-2.5 py-1.5 rounded border border-slate-700">Clear</button>
         </div>
 
         <form onsubmit="submitCommand(event)" class="flex border-t border-slate-800 bg-slate-900">
           <span class="px-3 py-2.5 text-emerald-400 font-mono text-sm select-none">$</span>
-          <input id="cmd-input" type="text" placeholder="Ketik perintah..." class="w-full bg-transparent text-sm font-mono text-white focus:outline-none py-2.5 pr-3" autocomplete="off" />
+          <input id="cmd-input" type="text" placeholder="Ketik perintah di sini lalu tekan Enter / Kirim..." class="w-full bg-transparent text-sm font-mono text-white focus:outline-none py-2.5 pr-3" autocomplete="off" />
           <button type="submit" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-5 transition">Kirim</button>
         </form>
       </div>
@@ -93,8 +93,8 @@
     <!-- Kolom Kanan: Upload & File/Folder Manager -->
     <section class="flex flex-col gap-6">
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
-        <h2 class="text-sm font-semibold text-white mb-1">Upload File / Script ZIP (Maks 200MB)</h2>
-        <p class="text-xs text-slate-400 mb-3">Akan diupload ke folder yang sedang dibuka & di-backup otomatis.</p>
+        <h2 class="text-sm font-semibold text-white mb-1">Upload File / Script ZIP (1x Klik Langsung Masuk)</h2>
+        <p class="text-xs text-slate-400 mb-3">Otomatis meratakan folder ZIP & langsung muncul di File Manager.</p>
 
         <label class="flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-emerald-500 rounded-lg p-4 cursor-pointer transition bg-slate-950/50">
           <span class="text-xs text-slate-300 font-medium text-center" id="file-label">Pilih file (.zip / .js / .json)</span>
@@ -112,7 +112,7 @@
           </div>
         </div>
 
-        <button onclick="uploadScript()" class="mt-3 w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2.5 rounded-lg transition">Upload & Simpan Permanen</button>
+        <button onclick="uploadScript()" id="btn-upload" class="mt-3 w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2.5 rounded-lg transition">Upload & Ekstrak Sekarang</button>
       </div>
 
       <!-- File & Folder Manager -->
@@ -120,15 +120,14 @@
         <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5">
           <h2 class="text-sm font-semibold text-white">File & Folder Manager</h2>
           <div class="flex items-center gap-1.5">
-            <button onclick="createNewFilePrompt()" class="bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 text-[11px] px-2 py-1 rounded transition" title="Buat File Baru">+ File</button>
-            <button onclick="createNewFolderPrompt()" class="bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 border border-amber-500/40 text-[11px] px-2 py-1 rounded transition" title="Buat Folder Baru">+ Folder</button>
+            <button onclick="createNewFilePrompt()" class="bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 text-[11px] px-2 py-1 rounded transition">+ File</button>
+            <button onclick="createNewFolderPrompt()" class="bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 border border-amber-500/40 text-[11px] px-2 py-1 rounded transition">+ Folder</button>
             <button onclick="loadFiles()" class="bg-slate-800 hover:bg-slate-700 text-cyan-400 text-[11px] px-2 py-1 rounded border border-slate-700 transition">↻</button>
           </div>
         </div>
 
-        <!-- Navigasi Lokasi Folder Saat Ini -->
         <div class="flex items-center justify-between bg-slate-950 px-2.5 py-1.5 rounded border border-slate-800 mb-2.5 text-xs font-mono">
-          <span id="current-dir-label" class="text-slate-300 truncate">📁 /root</span>
+          <span id="current-dir-label" class="text-slate-300 truncate">📁 /bot</span>
           <div class="flex items-center gap-2 shrink-0">
             <button id="btn-home-dir" onclick="openFolder('')" class="hidden text-cyan-400 hover:underline text-[11px]">🏠 Root</button>
             <button id="btn-back-dir" onclick="goUpDir()" class="hidden text-amber-400 hover:underline text-[11px]">⬅️ Kembali</button>
@@ -142,14 +141,13 @@
     </section>
   </main>
 
-  <!-- Modal Code Editor (Pop-up Edit & Simpan File) -->
+  <!-- Modal Code Editor -->
   <div id="editor-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-2 sm:p-6">
     <div class="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-5xl h-[88vh] flex flex-col shadow-2xl overflow-hidden">
-      <!-- Modal Header -->
       <div class="bg-slate-800 px-4 py-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-700">
         <div class="flex items-center gap-2 flex-1 min-w-[200px]">
           <span class="text-emerald-400">✏️</span>
-          <input id="editor-filepath-input" type="text" class="bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded px-2.5 py-1 text-xs sm:text-sm font-mono font-bold text-white w-full max-w-md focus:outline-none" title="Kamu juga bisa mengubah nama/lokasi file langsung di sini" />
+          <input id="editor-filepath-input" type="text" class="bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded px-2.5 py-1 text-xs sm:text-sm font-mono font-bold text-white w-full max-w-md focus:outline-none" />
         </div>
         <div class="flex items-center gap-2">
           <button onclick="saveEditedFile()" id="btn-save-file" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-1.5 rounded-lg shadow transition">
@@ -161,7 +159,6 @@
         </div>
       </div>
 
-      <!-- Area Textarea Code Editor -->
       <textarea
         id="editor-content"
         spellcheck="false"
@@ -169,16 +166,20 @@
         placeholder="Tulis atau edit kode file di sini..."
       ></textarea>
 
-      <!-- Modal Footer -->
       <div class="bg-slate-900 border-t border-slate-800 px-4 py-2 flex flex-wrap justify-between items-center gap-2 text-[11px] text-slate-400">
-        <span>Pintasan: <kbd class="bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">Ctrl + S</kbd> untuk langsung menyimpan, <kbd class="bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">Tab</kbd> untuk indentasi.</span>
+        <span>Pintasan: <kbd class="bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">Ctrl + S</kbd> untuk menyimpan, <kbd class="bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">Tab</kbd> untuk indentasi.</span>
         <span id="editor-status" class="text-emerald-400 font-medium">Siap diedit</span>
       </div>
     </div>
   </div>
 
   <script>
-    const socket = io();
+    const socket = io({
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: Infinity
+    });
+
     let currentDir = '';
     let originalEditPath = '';
 
@@ -189,10 +190,38 @@
     fitAddon.fit();
 
     window.addEventListener('resize', () => fitAddon.fit());
-    term.onData((data) => socket.emit('term-input', data));
-    socket.on('term-output', (data) => term.write(data));
 
-    // Dukungan tombol Tab & Ctrl+S di dalam Code Editor
+    // Indikator status koneksi real-time agar tahu kalau koneksi sempat putus
+    socket.on('connect', () => {
+      document.getElementById('conn-dot').className = 'h-3 w-3 rounded-full bg-emerald-400 animate-pulse';
+      document.getElementById('conn-badge').textContent = 'Online & Stabil';
+    });
+
+    socket.on('disconnect', () => {
+      document.getElementById('conn-dot').className = 'h-3 w-3 rounded-full bg-rose-500';
+      document.getElementById('conn-badge').textContent = 'Menyambung ulang...';
+    });
+
+    socket.on('term-output', (data) => term.write(data));
+    socket.on('files-updated', () => loadFiles());
+
+    // Input langsung dari kolom bawah agar tidak pernah macet di HP Android
+    function submitCommand(e) {
+      e.preventDefault();
+      const input = document.getElementById('cmd-input');
+      const val = input.value;
+      input.value = '';
+      socket.emit('term-input', val + '\n');
+    }
+
+    function quickCmd(cmd) {
+      socket.emit('term-input', cmd + '\n');
+      setTimeout(loadFiles, 1500);
+    }
+
+    function sendSigInt() { socket.emit('term-sigint'); }
+    function restartTerm() { term.clear(); socket.emit('term-restart'); }
+
     document.getElementById('editor-content').addEventListener('keydown', function(e) {
       if (e.key === 'Tab') {
         e.preventDefault();
@@ -206,16 +235,6 @@
         saveEditedFile();
       }
     });
-
-    function submitCommand(e) {
-      e.preventDefault();
-      const input = document.getElementById('cmd-input');
-      if (input.value.trim() !== '') { socket.emit('term-input', input.value + '\n'); input.value = ''; }
-    }
-
-    function quickCmd(cmd) { socket.emit('term-input', cmd); setTimeout(loadFiles, 1000); }
-    function sendSigInt() { socket.emit('term-sigint'); }
-    function restartTerm() { term.clear(); socket.emit('term-restart'); }
 
     async function manualBackup() {
       const btn = document.getElementById('btn-backup');
@@ -272,7 +291,7 @@
 
     async function loadFiles() {
       try {
-        document.getElementById('current-dir-label').textContent = `📁 /root${currentDir ? '/' + currentDir : ''}`;
+        document.getElementById('current-dir-label').textContent = `📁 /bot${currentDir ? '/' + currentDir : ''}`;
         const backBtn = document.getElementById('btn-back-dir');
         const homeBtn = document.getElementById('btn-home-dir');
         if (currentDir) {
@@ -283,11 +302,11 @@
           homeBtn.classList.add('hidden');
         }
 
-        const res = await fetch(`/api/files?dir=${encodeURIComponent(currentDir)}`);
+        const res = await fetch(`/api/files?dir=${encodeURIComponent(currentDir)}&t=${Date.now()}`);
         const files = await res.json();
         const list = document.getElementById('file-list');
         if (!files.length) {
-          list.innerHTML = '<li class="text-slate-500 py-2 text-center">Folder ini kosong.</li>';
+          list.innerHTML = '<li class="text-slate-500 py-2 text-center">Folder ini kosong. Silakan upload ZIP bot kamu.</li>';
           return;
         }
 
@@ -309,7 +328,7 @@
               <div class="flex items-center gap-1 shrink-0">
                 <span class="text-slate-500 text-[10px] mr-1">${f.size}</span>
                 ${editBtn}
-                <button onclick="renameItemPrompt('${safePath}')" class="bg-cyan-900/40 hover:bg-cyan-700 text-cyan-300 text-[11px] px-1.5 py-0.5 rounded border border-cyan-800/60 transition" title="Ganti Nama / Pindah">🏷️</button>
+                <button onclick="renameItemPrompt('${safePath}')" class="bg-cyan-900/40 hover:bg-cyan-700 text-cyan-300 text-[11px] px-1.5 py-0.5 rounded border border-cyan-800/60 transition" title="Ganti Nama">🏷️</button>
                 <button onclick="deleteFile('${safePath}')" class="bg-rose-900/40 hover:bg-rose-700 text-rose-300 text-[11px] px-1.5 py-0.5 rounded border border-rose-800/60 transition" title="Hapus">🗑️</button>
               </div>
             </li>
@@ -320,7 +339,7 @@
 
     async function openEditor(filePath) {
       try {
-        const res = await fetch(`/api/file-content?path=${encodeURIComponent(filePath)}`);
+        const res = await fetch(`/api/file-content?path=${encodeURIComponent(filePath)}&t=${Date.now()}`);
         const data = await res.json();
         if (!res.ok) return alert(data.error || 'Gagal membuka file.');
 
@@ -335,13 +354,13 @@
     }
 
     function createNewFilePrompt() {
-      const fileName = prompt('Masukkan nama file baru (contoh: config.js atau settings.json):');
+      const fileName = prompt('Masukkan nama file baru (contoh: config.js):');
       if (!fileName || !fileName.trim()) return;
       const fullNewPath = currentDir ? `${currentDir}/${fileName.trim()}` : fileName.trim();
       originalEditPath = '';
       document.getElementById('editor-filepath-input').value = fullNewPath;
       document.getElementById('editor-content').value = '';
-      document.getElementById('editor-status').textContent = 'File baru (Klik Simpan File untuk membuat)';
+      document.getElementById('editor-status').textContent = 'File baru';
       document.getElementById('editor-modal').classList.remove('hidden');
     }
 
@@ -392,10 +411,9 @@
 
       btn.textContent = '⏳ Menyimpan...';
       btn.disabled = true;
-      status.textContent = 'Menyimpan file & menyinkronkan ke Cloud Disk...';
+      status.textContent = 'Menyimpan file...';
 
       try {
-        // Jika pengguna juga mengganti nama file di kolom input atas editor
         if (originalEditPath && originalEditPath !== targetPath) {
           await fetch('/api/rename', {
             method: 'POST',
@@ -412,9 +430,8 @@
         const data = await res.json();
         if (res.ok) {
           originalEditPath = targetPath;
-          status.textContent = '✅ Berhasil disimpan & di-backup!';
+          status.textContent = '✅ Berhasil disimpan!';
           loadFiles();
-          loadStats();
         } else {
           alert(data.error || 'Gagal menyimpan file.');
           status.textContent = '❌ Gagal menyimpan';
@@ -446,11 +463,13 @@
       const formData = new FormData();
       formData.append('scriptFile', file);
 
+      const btn = document.getElementById('btn-upload');
       const wrap = document.getElementById('progress-wrapper');
       const bar = document.getElementById('progress-bar');
       const pct = document.getElementById('progress-percent');
       const status = document.getElementById('progress-status');
 
+      btn.disabled = true;
       wrap.classList.remove('hidden');
       status.textContent = 'Mengupload ke server...';
       bar.style.width = '0%';
@@ -466,18 +485,21 @@
           bar.style.width = percent + '%';
           pct.textContent = percent + '%';
           if (percent === 100) {
-            status.textContent = 'Memproses & Menyimpan ke Cloud Disk...';
+            status.textContent = 'Mengekstrak file...';
           }
         }
       };
 
       xhr.onload = () => {
+        btn.disabled = false;
         try {
           const res = JSON.parse(xhr.responseText || '{}');
           if (xhr.status === 200) {
-            status.textContent = 'Berhasil! Tersimpan permanen.';
+            status.textContent = res.message || 'Berhasil diekstrak!';
             bar.style.width = '100%';
             pct.textContent = '100%';
+            fileInput.value = '';
+            document.getElementById('file-label').textContent = 'Pilih file (.zip / .js / .json)';
             loadFiles();
             loadStats();
             setTimeout(() => wrap.classList.add('hidden'), 4000);
@@ -493,6 +515,7 @@
       };
 
       xhr.onerror = () => {
+        btn.disabled = false;
         status.textContent = 'Koneksi terputus saat upload.';
         bar.classList.add('bg-rose-500');
       };
@@ -503,8 +526,7 @@
 
     loadFiles();
     loadStats();
-    setInterval(loadStats, 3000);
-    setInterval(loadFiles, 5000);
+    setInterval(loadStats, 4000);
   </script>
 </body>
 </html>
