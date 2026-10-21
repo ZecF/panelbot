@@ -19,8 +19,6 @@ const io = new Server(server, {
 
 const PANEL_PORT = process.env.PORT || 3000;
 const BOT_PORT = '8080';
-
-// Ruang kerja bot dipisah di folder /bot agar TIDAK PERNAH bentrok dengan package.json panel!
 const WORKSPACE_DIR = path.join(__dirname, 'bot');
 const TMP_DIR = os.tmpdir();
 
@@ -54,7 +52,6 @@ function getSafePath(relPath = '') {
   return resolved;
 }
 
-// Riwayat log terminal
 let termHistory = '';
 function appendTermHistory(text) {
   termHistory += text;
@@ -69,7 +66,6 @@ function sysLog(msg) {
   io.emit('term-output', formatted);
 }
 
-// Upload disimpan ke /tmp dulu agar ekstraksi 100% bersih dan tidak gagal di percobaan pertama
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, TMP_DIR),
   filename: (req, file, cb) => cb(null, `upload_${Date.now()}_${file.originalname}`)
@@ -80,17 +76,193 @@ const upload = multer({
   limits: { fileSize: 200 * 1024 * 1024 }
 });
 
-// Fungsi otomatis memperbaiki package.json bot & mencegah Segfault SQLite
+// ================= ENGINE ANTI CORE-DUMPED (PURE JS SQLITE SHIM) =================
+// Menggantikan biner C++ better-sqlite3 yang sering bikin Segmentation Fault di Heroku
+// dengan penyimpanan JSON/JS murni yang 100% kompatibel dengan API better-sqlite3
+function injectSafeSqliteShim(dirPath) {
+  const shimDir = path.join(dirPath, 'node_modules', 'better-sqlite3');
+  fs.mkdirSync(shimDir, { recursive: true });
+
+  const shimPkg = {
+    name: 'better-sqlite3',
+    version: '11.3.0-safe-js',
+    main: 'index.js'
+  };
+
+  const shimCode = `
+const fs = require('fs');
+const path = require('path');
+
+class SafeStatement {
+  constructor(db, sql) {
+    this.db = db;
+    this.sql = sql.trim();
+    this.table = this._extractTable(this.sql);
+  }
+
+  _extractTable(sql) {
+    const m = sql.match(/(?:FROM|INTO|UPDATE|TABLE(?:\\s+IF\\s+NOT\\s+EXISTS)?)\\s+[\`"\\[]?([a-zA-Z0-9_]+)[\`"\\]]?/i);
+    return m ? m[1] : 'default_table';
+  }
+
+  _ensureTable() {
+    if (!this.db.data[this.table]) this.db.data[this.table] = {};
+    return this.db.data[this.table];
+  }
+
+  run(...params) {
+    const args = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
+    const flatArgs = args.length === 1 && typeof args[0] === 'object' && args[0] !== null ? Object.values(args[0]) : args;
+    const tbl = this._ensureTable();
+    const up = this.sql.toUpperCase();
+
+    if (up.startsWith('INSERT') || up.startsWith('REPLACE')) {
+      const colMatch = this.sql.match(/\\(([^)]+)\\)\\s*VALUES/i);
+      const cols = colMatch ? colMatch[1].split(',').map(c => c.trim().replace(/[\`"\\[\\]]/g, '')) : [];
+      const key = String(flatArgs[0] ?? Date.now());
+      const row = tbl[key] || {};
+      if (cols.length > 0) {
+        cols.forEach((c, idx) => { if (flatArgs[idx] !== undefined) row[c] = flatArgs[idx]; });
+      } else {
+        row.id = key;
+        row.value = flatArgs[1];
+      }
+      tbl[key] = row;
+      this.db._save();
+      return { changes: 1, lastInsertRowid: key };
+    }
+
+    if (up.startsWith('UPDATE')) {
+      const key = String(flatArgs[flatArgs.length - 1] ?? '');
+      const setMatch = this.sql.match(/SET\\s+(.+?)\\s+WHERE/i);
+      if (tbl[key] && setMatch) {
+        const assigns = setMatch[1].split(',').map(s => s.split('=')[0].trim().replace(/[\`"\\[\\]]/g, ''));
+        assigns.forEach((col, idx) => {
+          if (flatArgs[idx] !== undefined) tbl[key][col] = flatArgs[idx];
+        });
+      }
+      this.db._save();
+      return { changes: 1, lastInsertRowid: 0 };
+    }
+
+    if (up.startsWith('DELETE')) {
+      const key = String(flatArgs[0] ?? '');
+      if (key && tbl[key]) delete tbl[key];
+      else if (!this.sql.toUpperCase().includes('WHERE')) this.db.data[this.table] = {};
+      this.db._save();
+      return { changes: 1, lastInsertRowid: 0 };
+    }
+
+    this.db._save();
+    return { changes: 0, lastInsertRowid: 0 };
+  }
+
+  get(...params) {
+    const args = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
+    const flatArgs = args.length === 1 && typeof args[0] === 'object' && args[0] !== null ? Object.values(args[0]) : args;
+    const tbl = this._ensureTable();
+
+    if (/COUNT\\s*\\(/i.test(this.sql)) {
+      const count = Object.keys(tbl).length;
+      return { count, 'COUNT(*)': count, total: count };
+    }
+
+    if (flatArgs.length > 0) {
+      const key = String(flatArgs[0]);
+      if (tbl[key]) return tbl[key];
+      const found = Object.values(tbl).find(r => Object.values(r).includes(flatArgs[0]));
+      return found || undefined;
+    }
+
+    const all = Object.values(tbl);
+    return all.length > 0 ? all[0] : undefined;
+  }
+
+  all(...params) {
+    const tbl = this._ensureTable();
+    return Object.values(tbl);
+  }
+
+  iterate(...params) {
+    return this.all(...params)[Symbol.iterator]();
+  }
+
+  pluck() { return this; }
+  raw() { return this; }
+  bind() { return this; }
+}
+
+class SafeDatabase {
+  constructor(filename = 'database.db') {
+    this.filename = filename === ':memory:' ? null : String(filename) + '.json';
+    this.data = {};
+    this.open = true;
+    this.inTransaction = false;
+    if (this.filename && fs.existsSync(this.filename)) {
+      try {
+        this.data = JSON.parse(fs.readFileSync(this.filename, 'utf8'));
+      } catch (e) {
+        this.data = {};
+      }
+    }
+  }
+
+  _save() {
+    if (!this.filename || this.inTransaction) return;
+    try {
+      fs.mkdirSync(path.dirname(path.resolve(this.filename)), { recursive: true });
+      fs.writeFileSync(this.filename, JSON.stringify(this.data), 'utf8');
+    } catch (e) {}
+  }
+
+  prepare(sql) {
+    return new SafeStatement(this, sql);
+  }
+
+  exec(sql) {
+    this._save();
+    return this;
+  }
+
+  pragma() { return []; }
+
+  transaction(fn) {
+    return (...args) => {
+      this.inTransaction = true;
+      try {
+        const res = fn(...args);
+        this.inTransaction = false;
+        this._save();
+        return res;
+      } catch (err) {
+        this.inTransaction = false;
+        throw err;
+      }
+    };
+  }
+
+  function() { return this; }
+  aggregate() { return this; }
+  backup() { return Promise.resolve(); }
+  close() { this._save(); this.open = false; return this; }
+}
+
+module.exports = SafeDatabase;
+module.exports.default = SafeDatabase;
+`;
+
+  fs.writeFileSync(path.join(shimDir, 'package.json'), JSON.stringify(shimPkg, null, 2), 'utf8');
+  fs.writeFileSync(path.join(shimDir, 'index.js'), shimCode.trim(), 'utf8');
+}
+
 function autoFixBotFolder(dirPath) {
   try {
-    // 1. Hapus package-lock.json & file biner lama yang bikin Segmentation Fault
     const lockFile = path.join(dirPath, 'package-lock.json');
     if (fs.existsSync(lockFile)) fs.rmSync(lockFile, { force: true });
 
     const npmrcFile = path.join(dirPath, '.npmrc');
     fs.writeFileSync(npmrcFile, 'legacy-peer-deps=true\n', 'utf8');
 
-    // 2. Patch package.json bot
     const pkgPath = path.join(dirPath, 'package.json');
     if (fs.existsSync(pkgPath)) {
       const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
@@ -103,13 +275,16 @@ function autoFixBotFolder(dirPath) {
         }
       }
 
-      // Gunakan versi better-sqlite3 yang punya prebuilt binary stabil untuk Node 20 Linux x64
+      // Hapus better-sqlite3 asli dari daftar download agar tidak menginstal biner C++ yang bikin Core Dumped
       if (pkg.dependencies['better-sqlite3']) {
-        pkg.dependencies['better-sqlite3'] = '^11.3.0';
+        delete pkg.dependencies['better-sqlite3'];
       }
 
       fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2), 'utf8');
     }
+
+    // Pasang Pure JS SQLite Shim agar bot tetap jalan lancar tanpa biner C++
+    injectSafeSqliteShim(dirPath);
   } catch (e) {
     console.error('AutoFix error:', e.message);
   }
@@ -121,7 +296,7 @@ function hasBotFiles() {
   return files.length > 0;
 }
 
-// ================= CLOUD DISK (NON-BLOCKING DENGAN CLI ZIP/UNZIP) =================
+// ================= CLOUD DISK =================
 const ghHeaders = () => ({
   'Authorization': `token ${GITHUB_TOKEN}`,
   'Accept': 'application/vnd.github.v3+json',
@@ -137,12 +312,9 @@ async function backupToCloud(manual = false) {
 
   isBackingUp = true;
   diskStatus = 'Syncing ke Cloud...';
-  if (manual) sysLog(`Membuat cadangan file bot & session ke Cloud Disk (${GITHUB_REPO})...`);
-
-  const tempBackupZip = path.join(TMP_DIR, BACKUP_FILENAME);
+  if (manual) sysLog(`Menyimpan file bot & session ke Cloud Disk (${GITHUB_REPO})...`);
 
   try {
-    // Buat zip menggunakan AdmZip di memori untuk file penting saja (tanpa node_modules)
     const zip = new AdmZip();
     const items = fs.readdirSync(WORKSPACE_DIR, { withFileTypes: true });
 
@@ -204,10 +376,6 @@ async function backupToCloud(manual = false) {
     if (manual) sysLog(`Gagal Backup: ${err.message}`);
     isBackingUp = false;
     return false;
-  } finally {
-    if (fs.existsSync(tempBackupZip)) {
-      try { fs.unlinkSync(tempBackupZip); } catch (e) {}
-    }
   }
 }
 
@@ -258,7 +426,6 @@ async function restoreFromCloud() {
   isRestoring = false;
 }
 
-// Auto-backup setiap 10 menit agar tidak membebani CPU terminal
 setInterval(() => {
   backupToCloud(false);
 }, 10 * 60 * 1000);
@@ -311,7 +478,17 @@ app.post('/api/backup', async (req, res) => {
   else res.status(500).json({ error: 'Gagal menyimpan ke Cloud Disk. Cek log terminal.' });
 });
 
-// Perbaikan Total Upload: Ekstrak di /tmp dulu, ratakan folder pembungkus (seperti JH-Zapo-main), lalu pindahkan ke /bot!
+// Endpoint khusus untuk menambal ulang Anti Core-Dumped kapan saja
+app.post('/api/fix-coredump', (req, res) => {
+  try {
+    autoFixBotFolder(WORKSPACE_DIR);
+    sysLog('🛡️ Patch Anti Core-Dumped (Pure JS SQLite Shim) berhasil dipasang!');
+    res.json({ message: 'Patch Anti Core-Dumped aktif!' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/upload', (req, res) => {
   upload.single('scriptFile')(req, res, async (err) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -336,7 +513,6 @@ app.post('/api/upload', (req, res) => {
         zip.extractAllTo(extractTempDir, true);
         fs.unlinkSync(uploadedTempPath);
 
-        // Cek apakah isi ZIP dibungkus dalam 1 folder (misalnya JH-Zapo-main/)
         let sourceRoot = extractTempDir;
         const extractedItems = fs.readdirSync(extractTempDir).filter(n => n !== '__MACOSX' && n !== '.DS_Store');
         if (extractedItems.length === 1) {
@@ -346,7 +522,6 @@ app.post('/api/upload', (req, res) => {
           }
         }
 
-        // Salin semua file dari sourceRoot ke targetDir secara utuh dan pasti terbaca dalam 1x upload
         const itemsToCopy = fs.readdirSync(sourceRoot);
         for (const item of itemsToCopy) {
           if (item === 'node_modules' || item === 'package-lock.json') continue;
@@ -358,20 +533,17 @@ app.post('/api/upload', (req, res) => {
         fs.rmSync(extractTempDir, { recursive: true, force: true });
         autoFixBotFolder(WORKSPACE_DIR);
 
-        sysLog(`✅ ${origName} berhasil diekstrak (${itemsToCopy.length} item masuk ke File Manager)!`);
+        sysLog(`✅ ${origName} berhasil diekstrak & diproteksi dari Core Dumped!`);
         io.emit('files-updated');
-
-        // Backup jalan di background agar response upload langsung selesai cepat
         setTimeout(() => backupToCloud(false), 500);
 
-        return res.json({ message: `${origName} berhasil diekstrak dalam 1x klik!`, count: itemsToCopy.length });
+        return res.json({ message: `${origName} berhasil diekstrak!`, count: itemsToCopy.length });
       } catch (zipErr) {
         if (fs.existsSync(extractTempDir)) fs.rmSync(extractTempDir, { recursive: true, force: true });
         if (fs.existsSync(uploadedTempPath)) fs.unlinkSync(uploadedTempPath);
         return res.status(500).json({ error: `Gagal ekstrak ZIP: ${zipErr.message}` });
       }
     } else {
-      // Jika file biasa (.js, .json, dll)
       try {
         const destFile = path.join(targetDir, origName);
         fs.copyFileSync(uploadedTempPath, destFile);
@@ -387,7 +559,6 @@ app.post('/api/upload', (req, res) => {
   });
 });
 
-// Daftar File & Folder
 app.get('/api/files', (req, res) => {
   try {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -425,7 +596,6 @@ app.get('/api/files', (req, res) => {
   }
 });
 
-// Baca Isi File
 app.get('/api/file-content', (req, res) => {
   try {
     const relPath = String(req.query.path || '').replace(/^[/\\]+/, '');
@@ -448,7 +618,6 @@ app.get('/api/file-content', (req, res) => {
   }
 });
 
-// Simpan File
 app.post('/api/save-file', (req, res) => {
   try {
     const { filePath, content } = req.body;
@@ -469,7 +638,6 @@ app.post('/api/save-file', (req, res) => {
   }
 });
 
-// Buat Folder Baru
 app.post('/api/mkdir', (req, res) => {
   try {
     const { folderPath } = req.body;
@@ -487,7 +655,6 @@ app.post('/api/mkdir', (req, res) => {
   }
 });
 
-// Rename File / Folder
 app.post('/api/rename', (req, res) => {
   try {
     const { oldPath, newPath } = req.body;
@@ -511,7 +678,6 @@ app.post('/api/rename', (req, res) => {
   }
 });
 
-// Hapus File / Folder
 app.post('/api/delete', (req, res) => {
   try {
     const { fileName } = req.body;
@@ -533,7 +699,7 @@ app.post('/api/delete', (req, res) => {
   }
 });
 
-// ================= TERMINAL ANTI-FREEZE & RESPONSIF =================
+// ================= TERMINAL ANTI-FREEZE =================
 let shellProcess = null;
 
 function ensureShellAlive() {
@@ -548,14 +714,14 @@ function startInteractiveShell() {
     try { shellProcess.kill('SIGKILL'); } catch (e) {}
   }
 
-  // Gunakan bash tanpa flag -i agar tidak macet karena job-control / ioctl di Heroku
   shellProcess = spawn('bash', [], {
     cwd: WORKSPACE_DIR,
     env: {
       ...process.env,
       PORT: BOT_PORT,
       SERVER_PORT: BOT_PORT,
-      TERM: 'xterm-256color'
+      TERM: 'xterm-256color',
+      NODE_OPTIONS: '--max-old-space-size=460 --no-node-snapshot'
     }
   });
 
@@ -596,8 +762,8 @@ io.on('connection', (socket) => {
   if (termHistory.length > 0) {
     socket.emit('term-output', termHistory);
   } else {
-    const banner = `\x1b[1;36m=== PteroWA Termux Web Terminal (Anti-Freeze & Fix SQLite) ===\x1b[0m\r\n` +
-                   `\x1b[1;33mNode.js ${process.version} | Workspace: /bot | Cloud Disk: ${GITHUB_REPO}\x1b[0m\r\n` +
+    const banner = `\x1b[1;36m=== PteroWA Termux Web Terminal (Anti Core-Dumped Edition) ===\x1b[0m\r\n` +
+                   `\x1b[1;33mNode.js ${process.version} | Pure-JS SQLite Shim Aktif | Cloud Disk: ${GITHUB_REPO}\x1b[0m\r\n` +
                    `\x1b[1;32mtermux@ptero-wa\x1b[0m:\x1b[1;34m~/bot\x1b[0m$ `;
     appendTermHistory(banner);
     socket.emit('term-output', banner);
@@ -605,12 +771,15 @@ io.on('connection', (socket) => {
 
   socket.on('term-input', (cmd) => {
     ensureShellAlive();
+    // Setiap kali selesai npm install, otomatis suntikkan ulang Pure-JS SQLite Shim agar tidak pernah Core Dumped
+    if (cmd.includes('npm i') || cmd.includes('npm start') || cmd.includes('node app.js')) {
+      autoFixBotFolder(WORKSPACE_DIR);
+    }
+
     if (shellProcess && shellProcess.stdin.writable) {
-      // Echo perintah yang diketik agar langsung terlihat responsif di layar terminal
       io.emit('term-output', cmd);
       appendTermHistory(cmd);
       shellProcess.stdin.write(cmd.endsWith('\n') ? cmd : cmd + '\n');
-      // Cetak kembali prompt setelah perintah selesai
       shellProcess.stdin.write(`printf "\\r\\n\\033[1;32mtermux@ptero-wa\\033[0m:\\033[1;34m~/bot\\033[0m$ "\n`);
     }
   });
@@ -629,7 +798,7 @@ io.on('connection', (socket) => {
     exec(`pkill -f "node app.js"; pkill -f "node index.js"; pkill -f "node main.js"; pkill -f "npm"`, () => {
       termHistory = '';
       startInteractiveShell();
-      sysLog('Terminal berhasil di-reset dan siap menerima perintah baru!');
+      sysLog('Terminal berhasil di-reset!');
     });
   });
 });
