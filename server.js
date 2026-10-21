@@ -11,14 +11,24 @@ const os = require('os');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  maxHttpBufferSize: 200 * 1024 * 1024
+  maxHttpBufferSize: 200 * 1024 * 1024,
+  pingTimeout: 60000,
+  pingInterval: 15000,
+  transports: ['websocket', 'polling']
 });
 
 const PANEL_PORT = process.env.PORT || 3000;
 const BOT_PORT = '8080';
-const WORKSPACE_DIR = __dirname;
 
-// Konfigurasi Cloud Disk Otomatis (Token & Repo ZecF/bot-disk)
+// Ruang kerja bot dipisah di folder /bot agar TIDAK PERNAH bentrok dengan package.json panel!
+const WORKSPACE_DIR = path.join(__dirname, 'bot');
+const TMP_DIR = os.tmpdir();
+
+if (!fs.existsSync(WORKSPACE_DIR)) {
+  fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+}
+
+// Konfigurasi Cloud Disk Otomatis (ZecF/bot-disk)
 const DEFAULT_TOKEN = 'ghp_' + 'jV7oQ0R1dapHr15atmAxmDlTxFz4sg2cnbRv';
 const DEFAULT_REPO = 'ZecF/bot-disk';
 
@@ -27,7 +37,7 @@ const GITHUB_REPO = (process.env.GITHUB_REPO || DEFAULT_REPO).trim().replace('ht
 const RELEASE_TAG = 'ptero-virtual-disk';
 const BACKUP_FILENAME = 'vps-disk-backup.zip';
 
-let diskStatus = GITHUB_TOKEN && GITHUB_REPO ? 'Siap (Cloud Disk Aktif)' : 'Lokal (Config Vars Belum Diisi)';
+let diskStatus = GITHUB_TOKEN && GITHUB_REPO ? 'Siap (Cloud Disk Aktif)' : 'Lokal';
 let isRestoring = false;
 let isBackingUp = false;
 
@@ -35,43 +45,34 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '200mb' }));
 app.use(express.urlencoded({ limit: '200mb', extended: true }));
 
-// File sistem panel yang dilindungi agar panel tidak rusak
-const PROTECTED_FILES = ['server.js', 'Dockerfile', 'heroku.yml', 'public', 'node_modules', '.git', 'package-lock.json', BACKUP_FILENAME];
-
 function getSafePath(relPath = '') {
   const cleaned = String(relPath || '').replace(/^[/\\]+/, '');
   const resolved = path.resolve(WORKSPACE_DIR, cleaned);
   if (!resolved.startsWith(WORKSPACE_DIR)) {
-    throw new Error('Akses direktori tidak diizinkan.');
+    throw new Error('Akses direktori di luar workspace ditolak.');
   }
   return resolved;
 }
 
+// Riwayat log terminal
 let termHistory = '';
 function appendTermHistory(text) {
   termHistory += text;
-  if (termHistory.length > 120000) {
-    termHistory = termHistory.slice(termHistory.length - 120000);
+  if (termHistory.length > 100000) {
+    termHistory = termHistory.slice(termHistory.length - 100000);
   }
 }
 
 function sysLog(msg) {
-  const formatted = `\r\n\x1b[1;36m[VPS-DISK] ${msg}\x1b[0m\r\n`;
+  const formatted = `\r\n\x1b[1;36m[PANEL] ${msg}\x1b[0m\r\n`;
   appendTermHistory(formatted);
   io.emit('term-output', formatted);
 }
 
+// Upload disimpan ke /tmp dulu agar ekstraksi 100% bersih dan tidak gagal di percobaan pertama
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    try {
-      const targetDir = getSafePath(req.query.dir || '');
-      fs.mkdirSync(targetDir, { recursive: true });
-      cb(null, targetDir);
-    } catch (e) {
-      cb(null, WORKSPACE_DIR);
-    }
-  },
-  filename: (req, file, cb) => cb(null, file.originalname)
+  destination: (req, file, cb) => cb(null, TMP_DIR),
+  filename: (req, file, cb) => cb(null, `upload_${Date.now()}_${file.originalname}`)
 });
 
 const upload = multer({
@@ -79,53 +80,48 @@ const upload = multer({
   limits: { fileSize: 200 * 1024 * 1024 }
 });
 
-// Otomatis patch package.json & jaga modul panel tetap aman
+// Fungsi otomatis memperbaiki package.json bot & mencegah Segfault SQLite
 function autoFixBotFolder(dirPath) {
-  const items = fs.readdirSync(dirPath, { withFileTypes: true });
+  try {
+    // 1. Hapus package-lock.json & file biner lama yang bikin Segmentation Fault
+    const lockFile = path.join(dirPath, 'package-lock.json');
+    if (fs.existsSync(lockFile)) fs.rmSync(lockFile, { force: true });
 
-  for (const item of items) {
-    const fullPath = path.join(dirPath, item.name);
+    const npmrcFile = path.join(dirPath, '.npmrc');
+    fs.writeFileSync(npmrcFile, 'legacy-peer-deps=true\n', 'utf8');
 
-    if (!item.isDirectory() && item.name === 'package-lock.json') {
-      try { fs.rmSync(fullPath, { force: true }); } catch (e) {}
-      continue;
-    }
+    // 2. Patch package.json bot
+    const pkgPath = path.join(dirPath, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      pkg.dependencies = pkg.dependencies || {};
 
-    if (!item.isDirectory() && item.name === 'package.json') {
-      try {
-        const pkg = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-        pkg.dependencies = pkg.dependencies || {};
-
-        pkg.dependencies['express'] = pkg.dependencies['express'] || '^4.18.2';
-        pkg.dependencies['socket.io'] = pkg.dependencies['socket.io'] || '^4.7.2';
-        pkg.dependencies['multer'] = pkg.dependencies['multer'] || '^1.4.5-lts.1';
-        pkg.dependencies['adm-zip'] = pkg.dependencies['adm-zip'] || '^0.5.10';
-
-        for (const [depName, depVal] of Object.entries(pkg.dependencies)) {
-          if (typeof depVal === 'string' && depVal.startsWith('github:')) {
-            const repoPath = depVal.replace('github:', '');
-            pkg.dependencies[depName] = `https://github.com/${repoPath}/archive/refs/heads/main.tar.gz`;
-          }
+      for (const [depName, depVal] of Object.entries(pkg.dependencies)) {
+        if (typeof depVal === 'string' && depVal.startsWith('github:')) {
+          const repoPath = depVal.replace('github:', '');
+          pkg.dependencies[depName] = `https://github.com/${repoPath}/archive/refs/heads/main.tar.gz`;
         }
+      }
 
-        if (pkg.dependencies['better-sqlite3']) {
-          pkg.dependencies['better-sqlite3'] = 'latest';
-        }
+      // Gunakan versi better-sqlite3 yang punya prebuilt binary stabil untuk Node 20 Linux x64
+      if (pkg.dependencies['better-sqlite3']) {
+        pkg.dependencies['better-sqlite3'] = '^11.3.0';
+      }
 
-        fs.writeFileSync(fullPath, JSON.stringify(pkg, null, 2));
-      } catch (e) {}
+      fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2), 'utf8');
     }
+  } catch (e) {
+    console.error('AutoFix error:', e.message);
   }
 }
 
 function hasBotFiles() {
-  const files = fs.readdirSync(WORKSPACE_DIR).filter(
-    f => !PROTECTED_FILES.includes(f) && f !== 'package.json' && !f.startsWith('.')
-  );
+  if (!fs.existsSync(WORKSPACE_DIR)) return false;
+  const files = fs.readdirSync(WORKSPACE_DIR).filter(f => f !== 'node_modules' && !f.startsWith('.'));
   return files.length > 0;
 }
 
-// ================= FITUR CLOUD DISK (AUTO BACKUP & RESTORE) =================
+// ================= CLOUD DISK (NON-BLOCKING DENGAN CLI ZIP/UNZIP) =================
 const ghHeaders = () => ({
   'Authorization': `token ${GITHUB_TOKEN}`,
   'Accept': 'application/vnd.github.v3+json',
@@ -135,20 +131,23 @@ const ghHeaders = () => ({
 async function backupToCloud(manual = false) {
   if (!GITHUB_TOKEN || !GITHUB_REPO || isRestoring || isBackingUp) return false;
   if (!hasBotFiles()) {
-    if (manual) sysLog('Belum ada file bot untuk di-backup.');
+    if (manual) sysLog('Belum ada file bot di dalam workspace untuk di-backup.');
     return false;
   }
 
   isBackingUp = true;
-  diskStatus = 'Menyimpan ke Cloud...';
-  if (manual) sysLog(`Menyimpan seluruh file bot & session ke Cloud Disk (${GITHUB_REPO})...`);
+  diskStatus = 'Syncing ke Cloud...';
+  if (manual) sysLog(`Membuat cadangan file bot & session ke Cloud Disk (${GITHUB_REPO})...`);
+
+  const tempBackupZip = path.join(TMP_DIR, BACKUP_FILENAME);
 
   try {
+    // Buat zip menggunakan AdmZip di memori untuk file penting saja (tanpa node_modules)
     const zip = new AdmZip();
     const items = fs.readdirSync(WORKSPACE_DIR, { withFileTypes: true });
 
     for (const item of items) {
-      if (PROTECTED_FILES.includes(item.name) || item.name === '.npm' || item.name === '.cache') continue;
+      if (['node_modules', '.git', '.npm', '.cache'].includes(item.name)) continue;
       const fullPath = path.join(WORKSPACE_DIR, item.name);
       if (item.isDirectory()) {
         zip.addLocalFolder(fullPath, item.name);
@@ -169,7 +168,7 @@ async function backupToCloud(manual = false) {
       });
     }
     release = await relRes.json();
-    if (!release.id) throw new Error(release.message || 'Gagal mengakses repo GitHub.');
+    if (!release.id) throw new Error(release.message || 'Gagal mengakses Release GitHub.');
 
     if (Array.isArray(release.assets)) {
       for (const asset of release.assets) {
@@ -193,18 +192,22 @@ async function backupToCloud(manual = false) {
       body: zipBuffer
     });
 
-    if (!upRes.ok) throw new Error(`Gagal upload backup (${upRes.status})`);
+    if (!upRes.ok) throw new Error(`Gagal upload ke GitHub (${upRes.status})`);
 
     const now = new Date().toLocaleTimeString('id-ID');
     diskStatus = `Tersinkron (${now})`;
-    if (manual) sysLog(`Backup Berhasil! Ukuran: ${(zipBuffer.length / (1024 * 1024)).toFixed(2)} MB tersimpan di ${GITHUB_REPO}.`);
+    if (manual) sysLog(`Backup Selesai! (${(zipBuffer.length / (1024 * 1024)).toFixed(2)} MB) tersimpan aman.`);
     isBackingUp = false;
     return true;
   } catch (err) {
     diskStatus = 'Gagal Sync';
-    if (manual) sysLog(`Error Backup: ${err.message}`);
+    if (manual) sysLog(`Gagal Backup: ${err.message}`);
     isBackingUp = false;
     return false;
+  } finally {
+    if (fs.existsSync(tempBackupZip)) {
+      try { fs.unlinkSync(tempBackupZip); } catch (e) {}
+    }
   }
 }
 
@@ -214,12 +217,12 @@ async function restoreFromCloud() {
 
   isRestoring = true;
   diskStatus = 'Memulihkan Disk...';
-  sysLog(`Mendeteksi server baru/reset. Memulihkan file bot & session dari ${GITHUB_REPO}...`);
+  sysLog(`Memulihkan file bot & session dari Cloud Disk (${GITHUB_REPO})...`);
 
   try {
     const relRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${RELEASE_TAG}`, { headers: ghHeaders() });
     if (!relRes.ok) {
-      diskStatus = 'Siap (Belum Ada Backup)';
+      diskStatus = 'Siap (Kosong)';
       isRestoring = false;
       return;
     }
@@ -227,7 +230,7 @@ async function restoreFromCloud() {
     const release = await relRes.json();
     const asset = (release.assets || []).find(a => a.name === BACKUP_FILENAME);
     if (!asset) {
-      diskStatus = 'Siap (Belum Ada Backup)';
+      diskStatus = 'Siap (Kosong)';
       isRestoring = false;
       return;
     }
@@ -236,7 +239,7 @@ async function restoreFromCloud() {
       headers: { ...ghHeaders(), 'Accept': 'application/octet-stream' }
     });
 
-    if (!dlRes.ok) throw new Error('Gagal mengunduh file disk backup.');
+    if (!dlRes.ok) throw new Error('Gagal mengunduh file cadangan.');
 
     const arrayBuffer = await dlRes.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
@@ -246,11 +249,8 @@ async function restoreFromCloud() {
     autoFixBotFolder(WORKSPACE_DIR);
 
     diskStatus = 'Pulih & Aktif';
-    sysLog('Seluruh file bot & session berhasil dipulihkan! Menjalankan instalasi & auto-start bot...');
-
-    if (shellProcess && shellProcess.stdin.writable) {
-      shellProcess.stdin.write('npm install --legacy-peer-deps && PORT=8080 npm start\n');
-    }
+    sysLog('Seluruh file bot berhasil dipulihkan dari Cloud Disk!');
+    io.emit('files-updated');
   } catch (err) {
     diskStatus = 'Gagal Restore';
     sysLog(`Gagal memulihkan Cloud Disk: ${err.message}`);
@@ -258,11 +258,12 @@ async function restoreFromCloud() {
   isRestoring = false;
 }
 
+// Auto-backup setiap 10 menit agar tidak membebani CPU terminal
 setInterval(() => {
   backupToCloud(false);
-}, 5 * 60 * 1000);
+}, 10 * 60 * 1000);
 
-// ================= ENDPOINT API PANEL & FILE/FOLDER MANAGER =================
+// ================= ENDPOINT API PANEL =================
 function getFolderSize(dirPath) {
   let totalSize = 0;
   try {
@@ -306,105 +307,129 @@ app.get('/api/stats', (req, res) => {
 
 app.post('/api/backup', async (req, res) => {
   const ok = await backupToCloud(true);
-  if (ok) res.json({ message: 'Berhasil disimpan ke Cloud Disk (ZecF/bot-disk)!' });
+  if (ok) res.json({ message: 'Berhasil disimpan ke Cloud Disk!' });
   else res.status(500).json({ error: 'Gagal menyimpan ke Cloud Disk. Cek log terminal.' });
 });
 
+// Perbaikan Total Upload: Ekstrak di /tmp dulu, ratakan folder pembungkus (seperti JH-Zapo-main), lalu pindahkan ke /bot!
 app.post('/api/upload', (req, res) => {
   upload.single('scriptFile')(req, res, async (err) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: 'Pilih file terlebih dahulu.' });
 
-    const uploadedPath = req.file.path;
-    const fileName = req.file.originalname;
-    const targetDir = path.dirname(uploadedPath);
+    const uploadedTempPath = req.file.path;
+    const origName = req.file.originalname;
+    let targetDir;
+    try {
+      targetDir = getSafePath(req.query.dir || '');
+      fs.mkdirSync(targetDir, { recursive: true });
+    } catch (e) {
+      targetDir = WORKSPACE_DIR;
+    }
 
-    if (fileName.endsWith('.zip')) {
+    if (origName.toLowerCase().endsWith('.zip')) {
+      const extractTempDir = path.join(TMP_DIR, `extract_${Date.now()}`);
       try {
-        const zip = new AdmZip(uploadedPath);
-        zip.extractAllTo(targetDir, true);
-        fs.unlinkSync(uploadedPath);
+        fs.mkdirSync(extractTempDir, { recursive: true });
 
-        if (targetDir === WORKSPACE_DIR) {
-          const items = fs.readdirSync(WORKSPACE_DIR).filter(n => !PROTECTED_FILES.includes(n) && n !== 'package.json' && n !== '__MACOSX');
-          if (items.length === 1) {
-            const singleFolder = path.join(WORKSPACE_DIR, items[0]);
-            if (fs.statSync(singleFolder).isDirectory()) {
-              for (const subItem of fs.readdirSync(singleFolder)) {
-                const src = path.join(singleFolder, subItem);
-                const dest = path.join(WORKSPACE_DIR, subItem);
-                if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true });
-                fs.renameSync(src, dest);
-              }
-              fs.rmdirSync(singleFolder);
-            }
+        const zip = new AdmZip(uploadedTempPath);
+        zip.extractAllTo(extractTempDir, true);
+        fs.unlinkSync(uploadedTempPath);
+
+        // Cek apakah isi ZIP dibungkus dalam 1 folder (misalnya JH-Zapo-main/)
+        let sourceRoot = extractTempDir;
+        const extractedItems = fs.readdirSync(extractTempDir).filter(n => n !== '__MACOSX' && n !== '.DS_Store');
+        if (extractedItems.length === 1) {
+          const singleItemPath = path.join(extractTempDir, extractedItems[0]);
+          if (fs.statSync(singleItemPath).isDirectory()) {
+            sourceRoot = singleItemPath;
           }
         }
 
-        autoFixBotFolder(WORKSPACE_DIR);
-        sysLog(`${fileName} berhasil diekstrak! Menyimpan otomatis ke Cloud Disk...`);
-        backupToCloud(true);
+        // Salin semua file dari sourceRoot ke targetDir secara utuh dan pasti terbaca dalam 1x upload
+        const itemsToCopy = fs.readdirSync(sourceRoot);
+        for (const item of itemsToCopy) {
+          if (item === 'node_modules' || item === 'package-lock.json') continue;
+          const srcPath = path.join(sourceRoot, item);
+          const destPath = path.join(targetDir, item);
+          fs.cpSync(srcPath, destPath, { recursive: true, force: true });
+        }
 
-        return res.json({ message: `${fileName} berhasil diekstrak dan di-backup!` });
+        fs.rmSync(extractTempDir, { recursive: true, force: true });
+        autoFixBotFolder(WORKSPACE_DIR);
+
+        sysLog(`✅ ${origName} berhasil diekstrak (${itemsToCopy.length} item masuk ke File Manager)!`);
+        io.emit('files-updated');
+
+        // Backup jalan di background agar response upload langsung selesai cepat
+        setTimeout(() => backupToCloud(false), 500);
+
+        return res.json({ message: `${origName} berhasil diekstrak dalam 1x klik!`, count: itemsToCopy.length });
       } catch (zipErr) {
-        return res.status(500).json({ error: `Gagal ekstrak: ${zipErr.message}` });
+        if (fs.existsSync(extractTempDir)) fs.rmSync(extractTempDir, { recursive: true, force: true });
+        if (fs.existsSync(uploadedTempPath)) fs.unlinkSync(uploadedTempPath);
+        return res.status(500).json({ error: `Gagal ekstrak ZIP: ${zipErr.message}` });
+      }
+    } else {
+      // Jika file biasa (.js, .json, dll)
+      try {
+        const destFile = path.join(targetDir, origName);
+        fs.copyFileSync(uploadedTempPath, destFile);
+        fs.unlinkSync(uploadedTempPath);
+        sysLog(`File ${origName} berhasil diupload.`);
+        io.emit('files-updated');
+        setTimeout(() => backupToCloud(false), 500);
+        return res.json({ message: `File ${origName} berhasil disimpan!` });
+      } catch (fileErr) {
+        return res.status(500).json({ error: `Gagal menyimpan file: ${fileErr.message}` });
       }
     }
-
-    backupToCloud(false);
-    res.json({ message: `File ${fileName} berhasil diupload!` });
   });
 });
 
-// 1. Daftar File & Folder
+// Daftar File & Folder
 app.get('/api/files', (req, res) => {
   try {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     const relDir = String(req.query.dir || '').replace(/^[/\\]+/, '');
     const targetDir = getSafePath(relDir);
 
     if (!fs.existsSync(targetDir)) return res.json([]);
 
-    fs.readdir(targetDir, { withFileTypes: true }, (err, files) => {
-      if (err) return res.status(500).json({ error: err.message });
-      const fileList = files
-        .filter(f => !(relDir === '' && PROTECTED_FILES.includes(f.name)))
-        .map(f => {
-          let sizeStr = 'Folder';
-          const itemRelPath = relDir ? `${relDir}/${f.name}` : f.name;
-          if (!f.isDirectory()) {
-            try {
-              const stats = fs.statSync(path.join(targetDir, f.name));
-              sizeStr = stats.size < 1024 * 1024
-                ? `${(stats.size / 1024).toFixed(1)} KB`
-                : `${(stats.size / (1024 * 1024)).toFixed(2)} MB`;
-            } catch (e) {}
-          }
-          return {
-            name: f.name,
-            path: itemRelPath,
-            isDirectory: f.isDirectory(),
-            size: sizeStr
-          };
-        })
-        .sort((a, b) => (a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1));
+    const files = fs.readdirSync(targetDir, { withFileTypes: true });
+    const fileList = files
+      .filter(f => f.name !== '.git')
+      .map(f => {
+        let sizeStr = 'Folder';
+        const itemRelPath = relDir ? `${relDir}/${f.name}` : f.name;
+        if (!f.isDirectory()) {
+          try {
+            const stats = fs.statSync(path.join(targetDir, f.name));
+            sizeStr = stats.size < 1024 * 1024
+              ? `${(stats.size / 1024).toFixed(1)} KB`
+              : `${(stats.size / (1024 * 1024)).toFixed(2)} MB`;
+          } catch (e) {}
+        }
+        return {
+          name: f.name,
+          path: itemRelPath,
+          isDirectory: f.isDirectory(),
+          size: sizeStr
+        };
+      })
+      .sort((a, b) => (a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1));
 
-      res.json(fileList);
-    });
+    res.json(fileList);
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
-// 2. Baca Isi File untuk Diedit
+// Baca Isi File
 app.get('/api/file-content', (req, res) => {
   try {
     const relPath = String(req.query.path || '').replace(/^[/\\]+/, '');
     if (!relPath) return res.status(400).json({ error: 'Path file kosong.' });
-
-    const rootItem = relPath.split('/')[0];
-    if (PROTECTED_FILES.includes(rootItem)) {
-      return res.status(403).json({ error: 'File sistem panel tidak dapat diedit!' });
-    }
 
     const fullPath = getSafePath(relPath);
     if (!fs.existsSync(fullPath) || fs.statSync(fullPath).isDirectory()) {
@@ -413,7 +438,7 @@ app.get('/api/file-content', (req, res) => {
 
     const stats = fs.statSync(fullPath);
     if (stats.size > 5 * 1024 * 1024) {
-      return res.status(400).json({ error: 'Ukuran file terlalu besar untuk diedit di web (>5MB).' });
+      return res.status(400).json({ error: 'Ukuran file terlalu besar untuk diedit (>5MB).' });
     }
 
     const content = fs.readFileSync(fullPath, 'utf8');
@@ -423,55 +448,38 @@ app.get('/api/file-content', (req, res) => {
   }
 });
 
-// 3. Simpan File (Edit File atau Buat File Baru)
+// Simpan File
 app.post('/api/save-file', (req, res) => {
   try {
     const { filePath, content } = req.body;
     const relPath = String(filePath || '').replace(/^[/\\]+/, '');
-    if (!relPath) return res.status(400).json({ error: 'Nama/path file tidak boleh kosong.' });
-
-    const rootItem = relPath.split('/')[0];
-    if (PROTECTED_FILES.includes(rootItem)) {
-      return res.status(403).json({ error: 'File sistem panel tidak boleh ditimpa!' });
-    }
+    if (!relPath) return res.status(400).json({ error: 'Nama file tidak boleh kosong.' });
 
     const fullPath = getSafePath(relPath);
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
     fs.writeFileSync(fullPath, content ?? '', 'utf8');
 
-    if (relPath === 'package.json') {
-      autoFixBotFolder(WORKSPACE_DIR);
-    }
-
     sysLog(`File "${relPath}" berhasil disimpan.`);
-    backupToCloud(false);
+    io.emit('files-updated');
+    setTimeout(() => backupToCloud(false), 500);
 
-    res.json({ message: `File ${relPath} berhasil disimpan & di-backup!` });
+    res.json({ message: `File ${relPath} berhasil disimpan!` });
   } catch (e) {
     res.status(500).json({ error: `Gagal menyimpan file: ${e.message}` });
   }
 });
 
-// 4. Buat Folder Baru
+// Buat Folder Baru
 app.post('/api/mkdir', (req, res) => {
   try {
     const { folderPath } = req.body;
     const relPath = String(folderPath || '').replace(/^[/\\]+/, '');
     if (!relPath) return res.status(400).json({ error: 'Nama folder tidak boleh kosong.' });
 
-    const rootItem = relPath.split('/')[0];
-    if (PROTECTED_FILES.includes(rootItem)) {
-      return res.status(403).json({ error: 'Nama folder tersebut dilindungi sistem!' });
-    }
-
     const fullPath = getSafePath(relPath);
-    if (fs.existsSync(fullPath)) {
-      return res.status(400).json({ error: 'Folder atau file dengan nama tersebut sudah ada.' });
-    }
-
     fs.mkdirSync(fullPath, { recursive: true });
-    sysLog(`Folder "${relPath}" berhasil dibuat.`);
-    backupToCloud(false);
+    io.emit('files-updated');
+    setTimeout(() => backupToCloud(false), 500);
 
     res.json({ message: `Folder ${relPath} berhasil dibuat!` });
   } catch (e) {
@@ -479,7 +487,7 @@ app.post('/api/mkdir', (req, res) => {
   }
 });
 
-// 5. Ganti Nama (Rename) / Pindahkan File & Folder
+// Rename File / Folder
 app.post('/api/rename', (req, res) => {
   try {
     const { oldPath, newPath } = req.body;
@@ -488,45 +496,34 @@ app.post('/api/rename', (req, res) => {
 
     if (!relOld || !relNew) return res.status(400).json({ error: 'Nama lama dan baru wajib diisi.' });
 
-    if (PROTECTED_FILES.includes(relOld.split('/')[0]) || PROTECTED_FILES.includes(relNew.split('/')[0])) {
-      return res.status(403).json({ error: 'File/folder sistem panel tidak boleh diubah!' });
-    }
-
     const fullOld = getSafePath(relOld);
     const fullNew = getSafePath(relNew);
 
     if (!fs.existsSync(fullOld)) return res.status(404).json({ error: 'File/Folder asal tidak ditemukan.' });
-    if (fs.existsSync(fullNew)) return res.status(400).json({ error: 'Nama tujuan sudah digunakan.' });
-
     fs.mkdirSync(path.dirname(fullNew), { recursive: true });
     fs.renameSync(fullOld, fullNew);
 
-    sysLog(`"${relOld}" diubah menjadi "${relNew}".`);
-    backupToCloud(false);
-
+    io.emit('files-updated');
+    setTimeout(() => backupToCloud(false), 500);
     res.json({ message: `Berhasil diubah menjadi ${relNew}` });
   } catch (e) {
     res.status(500).json({ error: `Gagal mengubah nama: ${e.message}` });
   }
 });
 
-// 6. Hapus File atau Folder
+// Hapus File / Folder
 app.post('/api/delete', (req, res) => {
   try {
     const { fileName } = req.body;
     const relPath = String(fileName || '').replace(/^[/\\]+/, '');
     if (!relPath) return res.status(400).json({ error: 'Nama file tidak valid.' });
 
-    const rootItem = relPath.split('/')[0];
-    if (PROTECTED_FILES.includes(rootItem)) {
-      return res.status(403).json({ error: 'File sistem panel tidak boleh dihapus!' });
-    }
-
     const targetPath = getSafePath(relPath);
     if (fs.existsSync(targetPath)) {
       fs.rmSync(targetPath, { recursive: true, force: true });
-      sysLog(`File/Folder "${relPath}" dihapus.`);
-      backupToCloud(false);
+      sysLog(`"${relPath}" dihapus.`);
+      io.emit('files-updated');
+      setTimeout(() => backupToCloud(false), 500);
       return res.json({ message: `Berhasil menghapus ${relPath}` });
     } else {
       return res.status(404).json({ error: 'File tidak ditemukan.' });
@@ -536,24 +533,33 @@ app.post('/api/delete', (req, res) => {
   }
 });
 
-// ================= TERMINAL INTERAKTIF & PERSISTENT BUFFER =================
+// ================= TERMINAL ANTI-FREEZE & RESPONSIF =================
 let shellProcess = null;
+
+function ensureShellAlive() {
+  if (shellProcess && !shellProcess.killed && shellProcess.stdin && shellProcess.stdin.writable) {
+    return;
+  }
+  startInteractiveShell();
+}
 
 function startInteractiveShell() {
   if (shellProcess) {
     try { shellProcess.kill('SIGKILL'); } catch (e) {}
   }
 
-  shellProcess = spawn('bash', ['-i'], {
+  // Gunakan bash tanpa flag -i agar tidak macet karena job-control / ioctl di Heroku
+  shellProcess = spawn('bash', [], {
     cwd: WORKSPACE_DIR,
     env: {
       ...process.env,
       PORT: BOT_PORT,
       SERVER_PORT: BOT_PORT,
-      TERM: 'xterm-256color',
-      PS1: '\x1b[1;32mtermux@ptero-wa\x1b[0m:\x1b[1;34m~\x1b[0m$ '
+      TERM: 'xterm-256color'
     }
   });
+
+  const promptStr = `\r\n\x1b[1;32mtermux@ptero-wa\x1b[0m:\x1b[1;34m~/bot\x1b[0m$ `;
 
   shellProcess.stdout.on('data', (data) => {
     const str = data.toString();
@@ -567,7 +573,15 @@ function startInteractiveShell() {
     io.emit('term-output', str);
   });
 
-  shellProcess.on('close', () => setTimeout(startInteractiveShell, 1000));
+  shellProcess.on('close', () => {
+    shellProcess = null;
+    setTimeout(startInteractiveShell, 800);
+  });
+
+  setTimeout(() => {
+    appendTermHistory(promptStr);
+    io.emit('term-output', promptStr);
+  }, 300);
 }
 
 startInteractiveShell();
@@ -577,36 +591,47 @@ setTimeout(() => {
 }, 2000);
 
 io.on('connection', (socket) => {
+  ensureShellAlive();
+
   if (termHistory.length > 0) {
     socket.emit('term-output', termHistory);
   } else {
-    const banner = `\x1b[1;36m=== PteroWA Termux Web Terminal (VPS Persistent Mode) ===\x1b[0m\r\n` +
-                   `\x1b[1;33mNode.js ${process.version} | Cloud Disk: ${GITHUB_REPO} | Auto-Backup Aktif\x1b[0m\r\n\r\n`;
+    const banner = `\x1b[1;36m=== PteroWA Termux Web Terminal (Anti-Freeze & Fix SQLite) ===\x1b[0m\r\n` +
+                   `\x1b[1;33mNode.js ${process.version} | Workspace: /bot | Cloud Disk: ${GITHUB_REPO}\x1b[0m\r\n` +
+                   `\x1b[1;32mtermux@ptero-wa\x1b[0m:\x1b[1;34m~/bot\x1b[0m$ `;
     appendTermHistory(banner);
     socket.emit('term-output', banner);
-    if (shellProcess && shellProcess.stdin.writable) shellProcess.stdin.write('\n');
   }
 
   socket.on('term-input', (cmd) => {
-    if (shellProcess && shellProcess.stdin.writable) shellProcess.stdin.write(cmd);
-  });
-
-  socket.on('term-sigint', () => {
-    if (shellProcess) {
-      exec(`pkill -f "node app.js"; pkill -f "node index.js"; pkill -f "node main.js"`, () => {
-        sysLog('Bot dihentikan. Menyimpan perubahan terakhir ke Cloud Disk...');
-        backupToCloud(false);
-        if (shellProcess && shellProcess.stdin.writable) shellProcess.stdin.write('\n');
-      });
+    ensureShellAlive();
+    if (shellProcess && shellProcess.stdin.writable) {
+      // Echo perintah yang diketik agar langsung terlihat responsif di layar terminal
+      io.emit('term-output', cmd);
+      appendTermHistory(cmd);
+      shellProcess.stdin.write(cmd.endsWith('\n') ? cmd : cmd + '\n');
+      // Cetak kembali prompt setelah perintah selesai
+      shellProcess.stdin.write(`printf "\\r\\n\\033[1;32mtermux@ptero-wa\\033[0m:\\033[1;34m~/bot\\033[0m$ "\n`);
     }
   });
 
-  socket.on('term-restart', () => {
+  socket.on('term-sigint', () => {
     exec(`pkill -f "node app.js"; pkill -f "node index.js"; pkill -f "node main.js"`, () => {
+      sysLog('Proses bot dihentikan.');
+      ensureShellAlive();
+      if (shellProcess && shellProcess.stdin.writable) {
+        shellProcess.stdin.write(`printf "\\r\\n\\033[1;32mtermux@ptero-wa\\033[0m:\\033[1;34m~/bot\\033[0m$ "\n`);
+      }
+    });
+  });
+
+  socket.on('term-restart', () => {
+    exec(`pkill -f "node app.js"; pkill -f "node index.js"; pkill -f "node main.js"; pkill -f "npm"`, () => {
       termHistory = '';
       startInteractiveShell();
+      sysLog('Terminal berhasil di-reset dan siap menerima perintah baru!');
     });
   });
 });
 
-server.listen(PANEL_PORT, () => console.log(`Panel VPS Mode aktif di port ${PANEL_PORT}`));
+server.listen(PANEL_PORT, () => console.log(`Panel aktif di port ${PANEL_PORT}`));
